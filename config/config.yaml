@@ -1,0 +1,14 @@
+loki:
+  url: "http://loki.internal:3100"
+  query: '{namespace="prod"}'
+  poll_interval: 10s
+
+aggregation:
+  window: 1m
+  min_count: 1
+
+notification:
+  channels:
+    - type: slack
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+    - type: log
