@@ -37,6 +37,9 @@ var errorLevelKeywords = []struct {
 }
 
 func ParseLevel(raw string) string {
+	// PERF: ansiRegex.ReplaceAllString runs on every line even when most lines
+	// have no ANSI codes. A fast path check for the ESC byte (0x1b) before
+	// invoking the regex would skip the allocation for the common case.
 	cleaned := ansiRegex.ReplaceAllString(raw, "")
 
 	if level, found := parseJSONLevel(cleaned); found {
@@ -56,6 +59,13 @@ func parseJSONLevel(s string) (string, bool) {
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return "", false
 	}
+	// PERF: json.Unmarshal into map[string]interface{} is the most expensive
+	// parse path (~900ns, 26 allocs). We parse the entire JSON object just to
+	// read one field. Two alternatives:
+	//   1. Use a targeted string scan: find `"level":"` and extract the value
+	//      without parsing the full object (~10x faster, 0 allocs).
+	//   2. Unmarshal into a small struct with only the level fields, avoiding
+	//      the interface{} boxing allocations.
 	var obj map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
 		return "", false
@@ -79,6 +89,9 @@ func parseKVLevel(s string) (string, bool) {
 }
 
 func parseBracketLevel(s string) (string, bool) {
+	// PERF: FindAllStringSubmatch allocates a [][]string for every bracket
+	// pair in the line. A manual scan for '[' and ']' with a lookup into
+	// levelNames would eliminate these allocations entirely.
 	matches := bracketLevelRegex.FindAllStringSubmatch(s, -1)
 	for _, m := range matches {
 		word := strings.ToLower(m[1])

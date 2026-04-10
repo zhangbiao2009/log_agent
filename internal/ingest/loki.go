@@ -131,6 +131,15 @@ func (s *LokiSource) fetchLogs(ctx context.Context, start, end time.Time) ([]Log
 }
 
 func parseLokiResponse(r io.Reader) ([]LogLine, time.Time, error) {
+	// PERF: This function is the single largest allocation site (~5k allocs
+	// per 1000-line response). Three improvements to consider:
+	//   1. Pre-allocate the lines slice: estimate capacity from Content-Length
+	//      or response size to avoid repeated slice growth.
+	//   2. Pool []LogLine slices with sync.Pool to reuse across poll cycles,
+	//      since each poll produces a similarly-sized batch.
+	//   3. Use a streaming JSON tokenizer (json.Decoder.Token()) to parse
+	//      values directly instead of materializing the full response struct,
+	//      which would cut the string copy allocations for Raw fields.
 	var resp lokiResponse
 	if err := json.NewDecoder(r).Decode(&resp); err != nil {
 		return nil, time.Time{}, fmt.Errorf("decode response: %w", err)
