@@ -101,8 +101,8 @@
       {
         "stream": {"service": "payment-service", "namespace": "prod"},
         "values": [
-          ["1712678400000000000", "2026-04-09 [ERROR] connection refused"],
-          ["1712678401000000000", "2026-04-09 [INFO] health check ok"]
+          ["1775865600000000000", "2026-04-09 [ERROR] connection refused"],
+          ["1775865601000000000", "2026-04-09 [INFO] health check ok"]
         ]
       }
     ]
@@ -128,8 +128,8 @@
 
 #### TC-L05: HighWaterMark — deduplication across polls
 
-**Setup:** First poll returns timestamps [T1, T2, T3]. Second poll returns [T2, T3, T4, T5] (overlap).  
-**Expected:** Combined output: [T1, T2, T3, T4, T5]. No duplicates for T2, T3.
+**Setup:** First poll returns timestamps [T1, T2, T3]. Second poll uses `start = T3 + 1ns` and returns [T4, T5].  
+**Expected:** Combined output: [T1, T2, T3, T4, T5]. No duplicates. Verify the second HTTP request has `start` > T3.
 
 #### TC-L06: HighWaterMark — first poll starts from now
 
@@ -166,9 +166,14 @@
 ```go
 type Clock interface {
     Now() time.Time
-    NewTicker(d time.Duration) *time.Ticker
+    After(d time.Duration) <-chan time.Time
 }
 ```
+
+> Note: We use `After()` returning `<-chan time.Time` instead of
+> `NewTicker()` returning `*time.Ticker`, because `time.Ticker` is a
+> concrete type that can't be faked. The `FakeClock.After()` returns a
+> channel that the test controls via `FakeClock.Advance()`.
 
 #### TC-A01: Batches by service
 
@@ -322,6 +327,40 @@ type Clock interface {
 
 **Setup:** Send 3 alerts with different services.  
 **Expected:** Buffer contains 3 separate log entries.
+
+---
+
+### 1.7 `cmd/agent/main_test.go` — Config Loading
+
+#### TC-C01: loadConfig — valid YAML
+
+**Setup:** Write a temporary YAML config file with all fields populated.  
+**Expected:** Returned config struct has correct values for loki URL, query, poll_interval, aggregation window, min_count, and notification channels.
+
+#### TC-C02: loadConfig — env var expansion
+
+**Setup:** Set `SLACK_WEBHOOK_URL=https://hooks.example.com/test` in env. YAML contains `webhook_url: "${SLACK_WEBHOOK_URL}"`.  
+**Expected:** Parsed config has `webhook_url = "https://hooks.example.com/test"`. Unset the env var in `t.Cleanup`.
+
+#### TC-C03: loadConfig — missing env var
+
+**Setup:** YAML contains `${UNSET_VAR}`. Env var is not set.  
+**Expected:** Field is empty string (not the literal `${UNSET_VAR}`). No panic.
+
+#### TC-C04: loadConfig — missing file
+
+**Setup:** Call loadConfig with a non-existent path.  
+**Expected:** Returns error. No panic.
+
+#### TC-C05: loadConfig — invalid YAML
+
+**Setup:** File contains `{{{{not yaml`.  
+**Expected:** Returns error. No panic.
+
+#### TC-C06: loadConfig — defaults
+
+**Setup:** YAML with only `loki.url` set. All other fields omitted.  
+**Expected:** Defaults applied: `poll_interval=10s`, `window=1m`, `min_count=1`.
 
 ---
 
@@ -496,8 +535,20 @@ func (m *MockNotifier) Name() string { return "mock" }
 
 ```go
 type FakeClock struct {
-    now    time.Time
-    mu     sync.Mutex
+    now     time.Time
+    mu      sync.Mutex
+    waiters []waiter // channels waiting for Advance()
+}
+
+type waiter struct {
+    deadline time.Time
+    ch       chan time.Time
+}
+
+func (c *FakeClock) Now() time.Time { ... }
+func (c *FakeClock) Advance(d time.Duration) { ... } // fires ready waiters
+func (c *FakeClock) After(d time.Duration) <-chan time.Time { ... }
+```
     tickers []*FakeTicker
 }
 
@@ -516,7 +567,8 @@ func NewFakeLoki() *FakeLoki
 func (f *FakeLoki) AddResponse(lines []LogEntry)
 func (f *FakeLoki) URL() string
 func (f *FakeLoki) Close()
-func (f *FakeLoki) RequestCount() int // how many polls happened
+func (f *FakeLoki) RequestCount() int     // how many polls happened
+func (f *FakeLoki) LastStartParam() string // verify high-water mark advancement
 ```
 
 ---
@@ -527,4 +579,5 @@ func (f *FakeLoki) RequestCount() int // how many polls happened
 |---|---|---|
 | `internal/ingest` | ≥ 85% | `ParseLevel` table-driven tests cover most branches |
 | `internal/notify` | ≥ 80% | Slack HTTP edge cases are hard to exhaust |
+| `cmd/agent` | ≥ 70% | Config loading + env var expansion |
 | Overall | ≥ 80% | Measured with `go test -coverprofile=cover.out ./...` |

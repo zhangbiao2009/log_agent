@@ -11,16 +11,16 @@ sends notifications to any configured channel (starting with Slack + stdout).
 ## 1. Component Overview
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────────┐
-│  LogSource   │─────▶│  Filter      │─────▶│  Dispatcher     │
-│  (Loki API)  │      │  (ERROR/FATAL│      │  (fan-out to    │
-│              │      │   /WARN)     │      │   Notifiers)    │
-└─────────────┘      └──────────────┘      └────┬───────┬────┘
-                                                 │       │
-                                           ┌─────▼──┐ ┌──▼──────┐
-                                           │ Slack  │ │  Log    │
-                                           │Notifier│ │Notifier │
-                                           └────────┘ └─────────┘
+┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐
+│  LogSource   │───▶│  Filter      │───▶│  Aggregator  │───▶│  Dispatcher     │
+│  (Loki API)  │    │  (ERROR/FATAL│    │  (1-min      │    │  (fan-out to    │
+│              │    │   /WARN)     │    │   windows)   │    │   Notifiers)    │
+└─────────────┘    └──────────────┘    └──────────────┘    └────┬───────┬────┘
+                                                                │       │
+                                                          ┌─────▼──┐ ┌──▼──────┐
+                                                          │ Slack  │ │  Log    │
+                                                          │Notifier│ │Notifier │
+                                                          └────────┘ └─────────┘
 ```
 
 Three packages to build: `ingest`, `notify`, and the `main` wiring.
@@ -57,19 +57,21 @@ type LogSource interface {
 // loki.go
 
 type LokiSource struct {
-    BaseURL   string        // e.g. "http://loki.internal:3100"
-    Query     string        // LogQL query, e.g. `{namespace="prod"}`
-    Services  []string      // services to monitor (labels in Loki)
+    BaseURL      string        // e.g. "http://loki.internal:3100"
+    Query        string        // LogQL query, e.g. `{namespace="prod"}`
     PollInterval time.Duration // how often to query, default 10s
-    Client    *http.Client
+    Client       *http.Client
 }
 ```
 
 **How it works:**
 1. On `Stream()`, start a goroutine that polls Loki's
    `GET /loki/api/v1/query_range` every `PollInterval`.
-2. Track a high-water mark (`lastSeenTimestamp`) to avoid re-fetching
-   the same logs. Initialize to `time.Now()` on first run (only look forward).
+2. Use Loki's `start` parameter (exclusive) to avoid re-fetching.
+   After each successful poll, set `start` to `max(timestamps) + 1ns`.
+   Initialize to `time.Now()` on first run (only look forward).
+   This is safe because Loki timestamps have nanosecond precision and
+   the `start` boundary is exclusive in `query_range` with `direction=forward`.
 3. Parse the Loki JSON response, extract `stream` labels (service name)
    and `values` (timestamp + log line).
 4. Send each log line to the output channel.
@@ -79,9 +81,11 @@ type LokiSource struct {
 Never crash — the agent must stay up.
 
 **LogQL query:** The base query comes from config. For Phase 1 we use a
-simple selector like `{namespace="prod"} |= "ERROR" or "FATAL" or "WARN"`.
-This pushes initial filtering to Loki (server-side), reducing network
-transfer. We still filter client-side for safety.
+simple selector like `{namespace="prod"} |~ "ERROR|FATAL|WARN|panic"`.
+The `|~` operator is a regex line filter — it matches lines containing
+any of those keywords. This pushes initial filtering to Loki (server-side),
+reducing network transfer. We still filter client-side for safety
+(Loki's regex match is on the raw line; our `ParseLevel` is more precise).
 
 **Why poll instead of WebSocket/tail?** Loki's tail API uses WebSockets
 which are harder to manage (reconnect logic, proxy issues). Polling every
@@ -96,11 +100,13 @@ which are harder to manage (reconnect logic, proxy issues). Polling every
 var ErrorLevels = []string{"ERROR", "FATAL", "WARN", "panic"}
 
 // Filter returns a new channel that only emits log lines matching
-// error-level keywords.
+// error-level keywords. It calls ParseLevel on each line and sets
+// the Level field before emitting. Lines with Level="" are dropped.
 func Filter(ctx context.Context, in <-chan LogLine) <-chan LogLine
 
 // ParseLevel extracts the level from a raw log line.
 // Tries structured (JSON `level` field) first, falls back to keyword scan.
+// Returns normalized uppercase: "ERROR", "FATAL", "WARN", or "" if not an error.
 func ParseLevel(raw string) string
 ```
 
@@ -281,6 +287,11 @@ notification:
 
 Webhook URLs come from environment variables, not checked into source.
 
+**Environment variable expansion:** Go's YAML parsers don't natively expand
+`${VAR}` syntax. After loading the YAML, call `os.ExpandEnv()` on string
+fields that may contain env var references. Alternatively, use a library
+like `github.com/caarlos0/env` for struct-level env binding.
+
 ### 4.3 Graceful Shutdown
 
 On `SIGINT`/`SIGTERM`:
@@ -299,7 +310,7 @@ On `SIGINT`/`SIGTERM`:
 | Loki returns partial data | Process what we got. Next poll picks up where we left off (high-water mark). |
 | Slack webhook fails | Log error. Other notifiers still fire. Alert is not retried (acceptable in Phase 1; Phase 3 adds persistence). |
 | Malformed log line | Skip it, log at debug level. Never crash on bad input. |
-| Agent OOM | Bounded channels (buffer 10,000). If downstream is slow, drop oldest with a warning. |
+| Agent OOM | Bounded channels (buffer 10,000). LokiSource uses `select` with `default` to detect a full channel — when the buffer is full, new lines are dropped and a warning counter is incremented (logged every 10s). This is a lossy-on-overflow design; acceptable because Loki retains the logs and a human can query them if needed. |
 
 ---
 
