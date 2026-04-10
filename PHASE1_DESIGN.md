@@ -81,11 +81,16 @@ type LokiSource struct {
 Never crash — the agent must stay up.
 
 **LogQL query:** The base query comes from config. For Phase 1 we use a
-simple selector like `{namespace="prod"} |~ "ERROR|FATAL|WARN|panic"`.
-The `|~` operator is a regex line filter — it matches lines containing
-any of those keywords. This pushes initial filtering to Loki (server-side),
-reducing network transfer. We still filter client-side for safety
-(Loki's regex match is on the raw line; our `ParseLevel` is more precise).
+simple label selector like `{namespace="prod"}` without server-side
+content filtering. We avoid `|~ "ERROR|FATAL|WARN"` because it matches
+keywords anywhere in the log line (e.g. a DEBUG log whose message body
+contains "ERROR:") — this would give us the same false positives we're
+trying to avoid. All filtering is done client-side by `ParseLevel`, which
+understands structured log formats. The tradeoff is higher network transfer;
+if this becomes a problem, we can add Loki label-based filtering (e.g.
+`{namespace="prod", level=~"error|fatal|warn"}`) if services set the
+`level` label, or accept the bandwidth cost since the agent runs in the
+same cluster as Loki.
 
 **Why poll instead of WebSocket/tail?** Loki's tail API uses WebSockets
 which are harder to manage (reconnect logic, proxy issues). Polling every
@@ -110,10 +115,31 @@ func Filter(ctx context.Context, in <-chan LogLine) <-chan LogLine
 func ParseLevel(raw string) string
 ```
 
+**Pre-processing:** Before level detection, strip ANSI escape codes
+(e.g. `\x1b[31m`) from the raw line. Some tools inject color codes that
+wrap keywords like `\x1b[31mERROR:\x1b[0m`, which would confuse parsing.
+Use a simple regex: `\x1b\[[0-9;]*m` → `""`.
+
 **Level detection strategy (in order):**
-1. **JSON logs:** Try to unmarshal as JSON. Look for keys: `level`, `severity`, `log_level`. Map values: `error` → `ERROR`, `fatal` → `FATAL`, etc.
-2. **Known formats:** Match common patterns like `[ERROR]`, `level=error`, `ERROR -`, ` E ` (Go slog single-letter).
-3. **Keyword scan:** Search for the literal strings `ERROR`, `FATAL`, `WARN`, `panic` anywhere in the line. This is the fallback — broad but catches unstructured logs.
+1. **JSON logs:** Try to unmarshal as JSON. Look for keys: `level`, `severity`,
+   `log_level`. If a key is found, normalize its value (case-insensitive):
+   `error` → `ERROR`, `fatal` → `FATAL`, `warn`/`warning` → `WARN`.
+   If the value is a non-error level (`info`, `debug`, `trace`), return `""`
+   **immediately** — do NOT fall through to keyword scan.
+2. **Key-value format:** Match `level=<value>` (with or without quotes).
+   Same normalization and **same early-return rule**: `level=debug` → `""`
+   immediately, even if the message body contains "ERROR".
+3. **Bracket format:** Match `[ERROR]`, `[WARN]`, `[FATAL]`, `[INFO]`,
+   `[DEBUG]`. Same rule: recognized non-error brackets → return `""`.
+4. **Keyword scan (last resort):** Only reached when steps 1-3 found **no
+   structured level field at all**. Search for `ERROR`, `FATAL`, `WARN`,
+   `panic` as whole words. This catches truly unstructured logs.
+
+**Critical rule: structured level is authoritative.** If any of steps 1-3
+finds a level field, that level is the final answer. We never fall through
+to keyword scan on the message body. This prevents false positives like:
+- `level=debug msg="...ERROR: process exited..."` → `""` (debug, drop)
+- `{"level":"info","msg":"...severity:high...Error_account..."}` → `""` (info, drop)
 
 Lines that don't match any level are dropped silently.
 

@@ -42,8 +42,26 @@
 | 2 | `ts=2026-04-09 level=fatal msg="crash"` | `FATAL` |
 | 3 | `ts=2026-04-09 level=warn msg="retry"` | `WARN` |
 | 4 | `ts=2026-04-09 level=info msg="ok"` | `""` |
+| 5 | `ts=2026-04-09 level=debug msg="cache hit"` | `""` |
 
-#### TC-F04: ParseLevel — keyword fallback
+#### TC-F04: ParseLevel — structured level is authoritative (no fallthrough)
+
+These test that when a structured level field is found, the keyword scan
+is **not** applied to the message body — even if it contains error keywords.
+
+| # | Input | Expected Level | Notes |
+|---|---|---|---|
+| 1 | `time="2026-04-01T22:57:11Z" level=debug msg="Attempt 9 failed: ERROR: Process exited with status 127"` | `""` | Real log: `level=debug` is authoritative, `ERROR` in msg is ignored |
+| 2 | `{"level":"info","msg":"Trying to send alert &{Labels:map[alertname:Error_account severity:high]}"}` | `""` | Real log: `level=info` is authoritative, `Error` and `severity:high` in msg body ignored |
+| 3 | `time="2026-04-01T22:57:11Z" level=debug msg="\x1b[31mERROR: \x1b[0mProcess exited"` | `""` | ANSI-wrapped ERROR in msg body, but `level=debug` |
+| 4 | `{"level":"info","msg":"FATAL error in downstream"}` | `""` | JSON info with FATAL in msg |
+| 5 | `2026-04-09 [DEBUG] panic recovery handled gracefully` | `""` | Bracket DEBUG with `panic` in msg |
+| 6 | `{"level":"warn","msg":"disk space low"}` | `WARN` | Structured warn → returned as WARN, not dropped |
+| 7 | `time="2026-04-09" level=error msg="timeout"` | `ERROR` | key-value error level → returned correctly |
+
+#### TC-F05: ParseLevel — keyword fallback (unstructured logs only)
+
+These only apply to lines where **no structured level field** was found.
 
 | # | Input | Expected Level | Notes |
 |---|---|---|---|
@@ -54,33 +72,33 @@
 | 5 | `request completed 200 OK` | `""` | no error keywords |
 | 6 | `all systems operational` | `""` | no match |
 
-#### TC-F05: ParseLevel — edge cases
+#### TC-F06: ParseLevel — edge cases
 
 | # | Input | Expected Level | Notes |
 |---|---|---|---|
 | 1 | `""` | `""` | empty string |
 | 2 | `"   "` | `""` | whitespace only |
-| 3 | `{malformed json` | fall through to keyword scan | invalid JSON |
-| 4 | string with 10KB of text containing `ERROR` at the end | `ERROR` | large input |
-| 5 | `ERRORS_TOTAL metric updated` | `ERROR` | substring match (acceptable false positive for Phase 1) |
-| 6 | `user error: invalid email format` | `ERROR` | keyword appears mid-sentence |
+| 3 | `{malformed json` | fall through to keyword scan | invalid JSON, not structured |
+| 4 | string with 10KB of text containing `ERROR` at the end | `ERROR` | large unstructured input |
+| 5 | `\x1b[31mERROR:\x1b[0m connection refused` | `ERROR` | ANSI codes stripped, then keyword match (no structured level) |
+| 6 | `level=debug msg="ERROR" followed by more text level=error` | `""` | First `level=` wins (debug), second is inside msg |
 
-#### TC-F06: Filter — drops non-error lines
+#### TC-F07: Filter — drops non-error lines
 
 **Setup:** Create a buffered input channel. Push 10 log lines: 3 ERROR, 2 FATAL, 1 WARN, 4 INFO. Close input.  
 **Expected:** Output channel emits exactly 6 lines (3+2+1). All have Level ∈ {ERROR, FATAL, WARN}. Output channel closes after input is drained.
 
-#### TC-F07: Filter — empty input
+#### TC-F08: Filter — empty input
 
 **Setup:** Create input channel, close immediately.  
 **Expected:** Output channel closes without emitting anything. No goroutine leak.
 
-#### TC-F08: Filter — context cancellation
+#### TC-F09: Filter — context cancellation
 
 **Setup:** Create input channel with data. Start Filter. Cancel context before all lines are consumed.  
 **Expected:** Output channel closes. No goroutine leak. No panic.
 
-#### TC-F09: Filter — preserves metadata
+#### TC-F10: Filter — preserves metadata
 
 **Setup:** Push a LogLine with `Service="payment-service"`, `Timestamp=T`, `Raw="[ERROR] timeout"`.  
 **Expected:** Output line has identical `Service`, `Timestamp`, and `Raw`.
