@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -42,27 +43,31 @@ func (s *LokiSource) poll(ctx context.Context, out chan<- LogLine) {
 	defer close(out)
 	start := time.Now()
 	consecutiveFailures := 0
-	dropped := 0
 
 	ticker := time.NewTicker(s.config.PollInterval)
 	defer ticker.Stop()
 
-	s.doPoll(ctx, out, &start, &consecutiveFailures, &dropped)
+	// Pipeline parallelism: fetch+parse returns lines immediately, then a
+	// background goroutine sends them to the channel while the next fetch
+	// can proceed. A sendSem channel limits in-flight send goroutines to 2
+	// to prevent goroutine pile-up if the consumer is slow.
+	var sendWg sync.WaitGroup
+	sendSem := make(chan struct{}, 2)
+	defer sendWg.Wait()
+
+	s.doPoll(ctx, out, &start, &consecutiveFailures, &sendWg, sendSem)
 
 	for {
 		select {
 		case <-ctx.Done():
-			if dropped > 0 {
-				slog.Warn("dropped log lines due to full buffer", "total_dropped", dropped)
-			}
 			return
 		case <-ticker.C:
-			s.doPoll(ctx, out, &start, &consecutiveFailures, &dropped)
+			s.doPoll(ctx, out, &start, &consecutiveFailures, &sendWg, sendSem)
 		}
 	}
 }
 
-func (s *LokiSource) doPoll(ctx context.Context, out chan<- LogLine, start *time.Time, consecutiveFailures *int, dropped *int) {
+func (s *LokiSource) doPoll(ctx context.Context, out chan<- LogLine, start *time.Time, consecutiveFailures *int, sendWg *sync.WaitGroup, sendSem chan struct{}) {
 	end := time.Now()
 	lines, maxTS, err := s.fetchLogs(ctx, *start, end)
 	if err != nil {
@@ -75,20 +80,34 @@ func (s *LokiSource) doPoll(ctx context.Context, out chan<- LogLine, start *time
 		return
 	}
 	*consecutiveFailures = 0
-	for _, line := range lines {
-		select {
-		case out <- line:
-		default:
-			*dropped++
-		}
-	}
-	if *dropped > 0 && *dropped%1000 == 0 {
-		slog.Warn("dropping log lines due to full buffer", "total_dropped", *dropped)
-	}
+
+	// Advance start immediately so the next fetch can overlap with sending.
 	if !maxTS.IsZero() {
 		*start = maxTS.Add(1 * time.Nanosecond)
 	} else {
 		*start = end
+	}
+
+	// Send lines to channel in background, allowing the next poll to start.
+	// Acquire semaphore to limit concurrent senders (blocks if 2 already in-flight).
+	if len(lines) > 0 {
+		select {
+		case sendSem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		sendWg.Add(1)
+		go func(lines []LogLine) {
+			defer sendWg.Done()
+			defer func() { <-sendSem }()
+			for _, line := range lines {
+				select {
+				case out <- line:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(lines)
 	}
 }
 
