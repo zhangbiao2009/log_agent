@@ -126,14 +126,13 @@ func levelEmoji(level string) string {
 }
 
 func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
-	severityEmoji := "\U0001F534"
-	headerText := fmt.Sprintf("%s *INCIDENT %s*", severityEmoji, incident.ID)
-	if incident.Severity != "" {
-		headerText = fmt.Sprintf("%s *%s INCIDENT %s*", severityEmoji, incident.Severity, incident.ID)
-	}
+	headerText := s.incidentHeader(incident)
 	headerText += fmt.Sprintf(" — %d services affected\nRoot cause: %s (deepest in chain)\nChain: %s",
 		len(incident.Services), incident.RootService,
 		strings.Join(incident.DepChain, " → "))
+	if incident.Duration > 0 {
+		headerText += fmt.Sprintf("\nDuration: %s", incident.Duration)
+	}
 	blocks := []slackBlock{
 		{Type: "section", Text: &slackText{Type: "mrkdwn", Text: headerText}},
 	}
@@ -185,6 +184,21 @@ func (s *SlackNotifier) diagnosisBlocks(incident Incident) []slackBlock {
 		})
 	}
 	return blocks
+}
+
+func (s *SlackNotifier) incidentHeader(inc Incident) string {
+	sev := inc.Severity
+	if sev == "" {
+		sev = "INCIDENT"
+	}
+	switch inc.EventType {
+	case "resolved":
+		return fmt.Sprintf("✅ *%s INCIDENT RESOLVED %s*", sev, inc.ID)
+	case "updated":
+		return fmt.Sprintf("🔄 *%s INCIDENT UPDATE %s*", sev, inc.ID)
+	default:
+		return fmt.Sprintf("🔴 *%s INCIDENT OPENED %s*", sev, inc.ID)
+	}
 }
 
 // anomalyBadge returns a Slack emoji prefix for anomalous patterns.

@@ -379,3 +379,90 @@ func TestLogNotifier_SingleAlertWithDiagnosis(t *testing.T) {
 		t.Errorf("expected suggestion in output, got: %s", output)
 	}
 }
+
+// --- Event type / lifecycle tests ---
+
+func TestLogNotifier_EventType_Opened(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "log-ev-1",
+		Services:    []string{"svc-a", "svc-b"},
+		RootService: "svc-b",
+		DepChain:    []string{"svc-b", "svc-a"},
+		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
+		Severity:    "P1",
+		EventType:   "opened",
+		Status:      StatusOpen,
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	output := buf.String()
+	if !stringContains(output, "event=opened") {
+		t.Errorf("expected event=opened in output, got: %s", output)
+	}
+	if !stringContains(output, "status=OPEN") {
+		t.Errorf("expected status=OPEN in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_EventType_Resolved(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "log-ev-2",
+		Services:    []string{"svc-a"},
+		RootService: "svc-a",
+		DepChain:    []string{"svc-a"},
+		Alerts:      []Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
+		Severity:    "P2",
+		EventType:   "resolved",
+		Status:      StatusResolved,
+		Duration:    3 * time.Minute,
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	output := buf.String()
+	if !stringContains(output, "event=resolved") {
+		t.Errorf("expected event=resolved, got: %s", output)
+	}
+	if !stringContains(output, "duration=3m0s") {
+		t.Errorf("expected duration=3m0s, got: %s", output)
+	}
+}
+
+func TestLogNotifier_EventType_Updated(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "log-ev-3",
+		Services:    []string{"svc-a", "svc-b"},
+		RootService: "svc-b",
+		DepChain:    []string{"svc-b", "svc-a"},
+		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
+		Severity:    "P1",
+		EventType:   "updated",
+		Status:      StatusOngoing,
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	output := buf.String()
+	if !stringContains(output, "event=updated") {
+		t.Errorf("expected event=updated, got: %s", output)
+	}
+	if !stringContains(output, "status=ONGOING") {
+		t.Errorf("expected status=ONGOING, got: %s", output)
+	}
+}

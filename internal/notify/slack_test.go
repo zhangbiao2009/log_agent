@@ -625,3 +625,96 @@ func TestSlackNotifier_SingleAlertWithDiagnosis(t *testing.T) {
 		t.Error("expected diagnosis block in single-alert with diagnosis")
 	}
 }
+
+// --- Event type header tests ---
+
+func TestSlackNotifier_IncidentHeader_Opened(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "hdr-1",
+		Services:    []string{"svc-a", "svc-b"},
+		RootService: "svc-b",
+		DepChain:    []string{"svc-b", "svc-a"},
+		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
+		Severity:    "P2",
+		EventType:   "opened",
+		Status:      StatusOpen,
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	body := string(receivedBody)
+	if !contains(body, "OPENED") {
+		t.Error("expected OPENED in header")
+	}
+	if !contains(body, "P2") {
+		t.Error("expected P2 in header")
+	}
+}
+
+func TestSlackNotifier_IncidentHeader_Resolved(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "hdr-2",
+		Services:    []string{"svc-a"},
+		RootService: "svc-a",
+		DepChain:    []string{"svc-a"},
+		Alerts:      []Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
+		Severity:    "P1",
+		EventType:   "resolved",
+		Status:      StatusResolved,
+		Duration:    3 * time.Minute,
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	body := string(receivedBody)
+	if !contains(body, "RESOLVED") {
+		t.Error("expected RESOLVED in header")
+	}
+	if !contains(body, "Duration") {
+		t.Error("expected Duration in body")
+	}
+}
+
+func TestSlackNotifier_IncidentHeader_Updated(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "hdr-3",
+		Services:    []string{"svc-a", "svc-b"},
+		RootService: "svc-b",
+		DepChain:    []string{"svc-b", "svc-a"},
+		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
+		Severity:    "P1",
+		EventType:   "updated",
+		Status:      StatusOngoing,
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	body := string(receivedBody)
+	if !contains(body, "UPDATE") {
+		t.Error("expected UPDATE in header")
+	}
+}

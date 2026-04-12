@@ -57,7 +57,10 @@ type AggregationConfig struct {
 }
 
 type NotificationConfig struct {
-	Channels []ChannelConfig `yaml:"channels"`
+	DedupWindow   string          `yaml:"dedup_window"`
+	ResolveAfter  string          `yaml:"resolve_after"`
+	CheckInterval string          `yaml:"check_interval"`
+	Channels      []ChannelConfig `yaml:"channels"`
 }
 
 type PatternConfig struct {
@@ -79,8 +82,16 @@ type AnomalyConfig struct {
 }
 
 type ChannelConfig struct {
-	Type       string `yaml:"type"`
-	WebhookURL string `yaml:"webhook_url"`
+	Type         string   `yaml:"type"`
+	Severities   []string `yaml:"severities"`
+	WebhookURL   string   `yaml:"webhook_url"`
+	SMTPHost     string   `yaml:"smtp_host"`
+	SMTPPort     int      `yaml:"smtp_port"`
+	SMTPUsername string   `yaml:"smtp_username"`
+	SMTPPassword string   `yaml:"smtp_password"`
+	From         string   `yaml:"from"`
+	Recipients   []string `yaml:"recipients"`
+	UseTLS       *bool    `yaml:"use_tls"`
 }
 
 type CorrelatorConfig struct {
@@ -127,25 +138,50 @@ func parseDuration(s string, defaultVal time.Duration) time.Duration {
 	return d
 }
 
-func buildNotifiers(cfg NotificationConfig) []notify.Notifier {
-	var notifiers []notify.Notifier
+func buildNotifiers(cfg NotificationConfig) []notify.NotifierRoute {
+	var routes []notify.NotifierRoute
 	for _, ch := range cfg.Channels {
+		var n notify.Notifier
 		switch ch.Type {
 		case "slack":
 			if ch.WebhookURL == "" {
 				slog.Warn("slack notifier configured but webhook_url is empty, skipping")
 				continue
 			}
-			notifiers = append(notifiers, notify.NewSlackNotifier(ch.WebhookURL))
-			slog.Info("registered notifier", "type", "slack")
+			n = notify.NewSlackNotifier(ch.WebhookURL)
 		case "log":
-			notifiers = append(notifiers, notify.NewLogNotifier(nil))
-			slog.Info("registered notifier", "type", "log")
+			n = notify.NewLogNotifier(nil)
+		case "email":
+			useTLS := true
+			if ch.UseTLS != nil {
+				useTLS = *ch.UseTLS
+			}
+			n = notify.NewEmailNotifier(notify.EmailConfig{
+				Host:       ch.SMTPHost,
+				Port:       ch.SMTPPort,
+				Username:   ch.SMTPUsername,
+				Password:   ch.SMTPPassword,
+				From:       ch.From,
+				Recipients: ch.Recipients,
+				UseTLS:     useTLS,
+			})
+		case "teams":
+			if ch.WebhookURL == "" {
+				slog.Warn("teams notifier configured but webhook_url is empty, skipping")
+				continue
+			}
+			n = notify.NewTeamsNotifier(notify.TeamsConfig{WebhookURL: ch.WebhookURL})
 		default:
 			slog.Warn("unknown notifier type, skipping", "type", ch.Type)
+			continue
 		}
+		slog.Info("registered notifier", "type", ch.Type, "severities", ch.Severities)
+		routes = append(routes, notify.NotifierRoute{
+			Notifier:   n,
+			Severities: ch.Severities,
+		})
 	}
-	return notifiers
+	return routes
 }
 
 func buildSource(cfg *Config) (ingest.LogSource, error) {
@@ -199,12 +235,12 @@ func run() error {
 		return fmt.Errorf("build source: %w", err)
 	}
 
-	notifiers := buildNotifiers(cfg.Notification)
-	if len(notifiers) == 0 {
+	routes := buildNotifiers(cfg.Notification)
+	if len(routes) == 0 {
 		slog.Warn("no notifiers configured, adding log notifier as fallback")
-		notifiers = append(notifiers, notify.NewLogNotifier(nil))
+		routes = append(routes, notify.NotifierRoute{Notifier: notify.NewLogNotifier(nil)})
 	}
-	dispatcher := notify.NewDispatcher(notifiers...)
+	dispatcher := notify.NewRoutedDispatcher(routes)
 
 	aggregator := notify.NewAggregator(window, minCount)
 
@@ -313,9 +349,22 @@ func run() error {
 		diagnosed = incidents
 	}
 
-	for inc := range diagnosed {
+	// Stage 7: Lifecycle Manager (dedup + auto-resolve).
+	lifecycleCfg := notify.LifecycleConfig{
+		DedupWindow:   parseDuration(cfg.Notification.DedupWindow, 5*time.Minute),
+		ResolveAfter:  parseDuration(cfg.Notification.ResolveAfter, 10*time.Minute),
+		CheckInterval: parseDuration(cfg.Notification.CheckInterval, 1*time.Minute),
+	}
+	lm := notify.NewLifecycleManager(lifecycleCfg)
+	managed := lm.Run(ctx, diagnosed)
+	slog.Info("lifecycle manager enabled",
+		"dedup_window", lifecycleCfg.DedupWindow,
+		"resolve_after", lifecycleCfg.ResolveAfter,
+	)
+
+	for inc := range managed {
 		if err := dispatcher.Dispatch(ctx, inc); err != nil {
-			slog.Error("dispatch failed", "err", err)
+			slog.Error("dispatch failed", "err", err, "event", inc.EventType, "id", inc.ID)
 		}
 	}
 

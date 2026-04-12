@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// IncidentStatus represents the lifecycle state of an incident.
+type IncidentStatus string
+
+const (
+	StatusOpen     IncidentStatus = "OPEN"
+	StatusOngoing  IncidentStatus = "ONGOING"
+	StatusResolved IncidentStatus = "RESOLVED"
+)
+
 // Incident groups correlated alerts from related services.
 // Single-alert Incidents (from WrapAlerts or uncorrelated services) have
 // RootService="" and len(Alerts)==1; renderers treat them identically to
@@ -25,6 +34,11 @@ type Incident struct {
 	Diagnosis   string   // LLM-generated root-cause explanation
 	Severity    string   // P1, P2, P3 (assigned by LLM or heuristic)
 	Suggestions []string // actionable fix steps
+
+	// Set by LifecycleManager (Phase 6). Zero values when lifecycle is disabled.
+	Status    IncidentStatus // OPEN, ONGOING, RESOLVED
+	EventType string         // "opened", "updated", "resolved"
+	Duration  time.Duration  // elapsed since OpenedAt (set on resolve)
 }
 
 // IsSingleAlert returns true for uncorrelated single-alert incidents

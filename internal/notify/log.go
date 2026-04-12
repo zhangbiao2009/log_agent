@@ -37,6 +37,12 @@ func (l *LogNotifier) Send(_ context.Context, incident Incident) error {
 	if incident.Severity != "" {
 		attrs = append(attrs, "severity", incident.Severity)
 	}
+	if incident.EventType != "" {
+		attrs = append(attrs, "event", incident.EventType, "status", string(incident.Status))
+	}
+	if incident.Duration > 0 {
+		attrs = append(attrs, "duration", incident.Duration.String())
+	}
 	attrs = append(attrs,
 		"services", strings.Join(incident.Services, ", "),
 		"chain", strings.Join(incident.DepChain, " → "),

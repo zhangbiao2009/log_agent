@@ -64,21 +64,60 @@ type Notifier interface {
 	Name() string
 }
 
-// Dispatcher fans out alerts to all registered notifiers.
+// NotifierRoute pairs a Notifier with the severities it should handle.
+type NotifierRoute struct {
+	Notifier   Notifier
+	Severities []string // empty = all severities
+}
+
+// routedNotifier wraps a notifier with a severity filter.
+type routedNotifier struct {
+	notifier   Notifier
+	severities map[string]bool // nil or empty = accept all
+}
+
+func (rn routedNotifier) matches(severity string) bool {
+	if len(rn.severities) == 0 {
+		return true
+	}
+	return rn.severities[severity]
+}
+
+// Dispatcher fans out alerts to registered notifiers, filtered by severity.
 type Dispatcher struct {
-	notifiers []Notifier
+	notifiers []routedNotifier
 	timeout   time.Duration
 }
 
-// NewDispatcher creates a Dispatcher with the given notifiers.
+// NewDispatcher creates a Dispatcher with the given notifiers (no severity filter).
 func NewDispatcher(notifiers ...Notifier) *Dispatcher {
+	routed := make([]routedNotifier, len(notifiers))
+	for i, n := range notifiers {
+		routed[i] = routedNotifier{notifier: n}
+	}
 	return &Dispatcher{
-		notifiers: notifiers,
+		notifiers: routed,
 		timeout:   10 * time.Second,
 	}
 }
 
-// Dispatch sends the incident to all notifiers concurrently.
+// NewRoutedDispatcher creates a Dispatcher with per-notifier severity routing.
+func NewRoutedDispatcher(routes []NotifierRoute) *Dispatcher {
+	routed := make([]routedNotifier, len(routes))
+	for i, r := range routes {
+		sevMap := make(map[string]bool, len(r.Severities))
+		for _, s := range r.Severities {
+			sevMap[s] = true
+		}
+		routed[i] = routedNotifier{notifier: r.Notifier, severities: sevMap}
+	}
+	return &Dispatcher{
+		notifiers: routed,
+		timeout:   10 * time.Second,
+	}
+}
+
+// Dispatch sends the incident to all notifiers whose severity filter matches.
 // Logs errors from individual notifiers but does not fail the pipeline.
 // Returns an error if any notifier failed.
 func (d *Dispatcher) Dispatch(ctx context.Context, incident Incident) error {
@@ -92,20 +131,23 @@ func (d *Dispatcher) Dispatch(ctx context.Context, incident Incident) error {
 		errs []string
 	)
 
-	for _, n := range d.notifiers {
+	for _, rn := range d.notifiers {
+		if !rn.matches(incident.Severity) {
+			continue
+		}
 		wg.Add(1)
-		go func(n Notifier) {
+		go func(rn routedNotifier) {
 			defer wg.Done()
 			sendCtx, cancel := context.WithTimeout(ctx, d.timeout)
 			defer cancel()
 
-			if err := n.Send(sendCtx, incident); err != nil {
-				slog.Error("notifier failed", "notifier", n.Name(), "err", err)
+			if err := rn.notifier.Send(sendCtx, incident); err != nil {
+				slog.Error("notifier failed", "notifier", rn.notifier.Name(), "err", err)
 				mu.Lock()
-				errs = append(errs, fmt.Sprintf("%s: %v", n.Name(), err))
+				errs = append(errs, fmt.Sprintf("%s: %v", rn.notifier.Name(), err))
 				mu.Unlock()
 			}
-		}(n)
+		}(rn)
 	}
 
 	wg.Wait()
