@@ -166,14 +166,23 @@ is clearly unusual and should be flagged.
 
 ### 5.5 New Pattern Detection
 
-A pattern is "new" if `time.Since(firstSeen) < new_pattern_grace`. This
+A pattern is "new" if `time.Since(lastSeen) > new_pattern_grace`. This
 means:
-- Patterns seen for the first time ever → always flagged New.
-- Patterns that haven't appeared in 24h (config) and then reappear → also flagged New.
-  This catches recurring but infrequent bugs that come back.
+- Patterns seen for the first time ever → `lastSeen` is the zero `time.Time`,
+  so `time.Since(zero) ≈ 56 years > 24h` → always flagged New.
+- Patterns that haven't appeared in 24h reappear → `lastSeen` is stale,
+  so the check triggers again. This catches recurring but infrequent bugs.
 
-`firstSeen` is the timestamp of the first window in which the pattern
-appeared, set once and never updated.
+`lastSeen` is updated on **every** window in `evaluate` (step 9 below),
+after all classification has been done. The update happens even for
+non-anomalous windows, so the field always reflects the most recent
+window where the pattern was observed.
+
+**Why `LastSeen` and not `FirstSeen`?**  
+`FirstSeen` (set once, never updated) can only detect patterns younger
+than the grace period — it cannot detect patterns that disappeared and
+reappeared. `LastSeen` (updated every window) enables both cases with a
+single field and a single condition.
 
 ### 5.6 Known Limitations (Future Work)
 
@@ -244,7 +253,7 @@ type PatternBaseline struct {
     N        int         // number of observations seen so far
     Mean     float64     // EMA mean
     Variance float64     // EMA variance
-    FirstSeen time.Time  // when this pattern was first observed
+    LastSeen time.Time   // last window this pattern was observed (zero = never seen)
 }
 
 // Update incorporates a new window count into the EMA.
@@ -253,8 +262,9 @@ func (b *PatternBaseline) Update(count int, alpha float64)
 // Stddev returns sqrt(Variance), floored at 0.
 func (b *PatternBaseline) Stddev() float64
 
-// IsNewPattern returns true if b.FirstSeen is within the grace duration
-// (caller is responsible for passing the grace duration).
+// IsNewPattern returns true if this pattern has not been seen recently.
+// A zero LastSeen (never observed) always returns true.
+// A stale LastSeen (> grace ago) returns true — pattern reappeared after absence.
 func (b *PatternBaseline) IsNewPattern(grace time.Duration, now time.Time) bool
 
 // IsSpike returns true if count exceeds the spike threshold.
@@ -300,17 +310,22 @@ func (s *MemoryStore) Set(patternID string, b PatternBaseline)
 // detector.go
 
 type AnomalyConfig struct {
-    SpikeMultiplier  float64       // default: 3.0
-    RateJumpFactor   float64       // default: 5.0
-    EMAAlpha         float64       // default: 0.3
-    MinSamples       int           // default: 5
-    NewPatternGrace  time.Duration // default: 24h
+    SpikeMultiplier float64       // default: 3.0
+    RateJumpFactor  float64       // default: 5.0
+    EMAAlpha        float64       // default: 0.3
+    MinSamples      int           // default: 5
+    NewPatternGrace time.Duration // default: 24h
 }
+
+// setDefaults fills zero-value fields with safe production defaults.
+// Called by NewAnomalyDetector. A zero SpikeMultiplier would fire on
+// every window; a zero EMAAlpha would freeze the mean at first observation.
+func (c *AnomalyConfig) setDefaults()
 
 type AnomalyDetector struct {
     config AnomalyConfig
     store  BaselineStore
-    clock  Clock          // injectable for tests
+    Clock  notify.Clock // exported so tests can inject a fake (mirrors Aggregator.Clock)
 }
 
 func NewAnomalyDetector(cfg AnomalyConfig, store BaselineStore) *AnomalyDetector
@@ -323,10 +338,9 @@ func NewAnomalyDetector(cfg AnomalyConfig, store BaselineStore) *AnomalyDetector
 // The output channel is closed when ctx is done or in is closed.
 func (d *AnomalyDetector) Run(ctx context.Context, in <-chan notify.Alert) <-chan notify.Alert
 
-// Clock is the same interface as in notify (copy to avoid circular import).
-type Clock interface {
-    Now() time.Time
-}
+// No separate Clock interface: AnomalyDetector.Clock is typed as notify.Clock.
+// Since anomaly already imports notify (for notify.Alert), there is no import
+// cycle. Copying the interface would create a gratuitous divergence point.
 ```
 
 **Internal `evaluate` method:**
@@ -338,18 +352,30 @@ func (d *AnomalyDetector) evaluate(alert notify.Alert) (notify.Alert, bool)
 ```
 
 For each `PatternSummary` in `alert.Patterns`:
-1. Look up baseline in the store.
-2. If not found: create a new `PatternBaseline{FirstSeen: now}`, mark as `AnomalyNewPattern`.
-3. If found but `IsNewPattern(grace, now)`: mark `AnomalyNewPattern`.
-4. Else if `IsSpike(count, ...)`: mark `AnomalySpike`, set `ZScore`.
-5. Else if `IsRateJump(count, ...)`: mark `AnomalyRateJump`.
-6. Else: `AnomalyNone`.
-7. In all cases: call `baseline.Update(count, alpha)`, call `store.Set(...)`.
-8. Set `ps.Baseline = baseline.Mean`, `ps.ZScore = baseline.ZScore(count)`.
+1. `now := d.Clock.Now()`; look up baseline in the store.
+2. If not found: create a new `PatternBaseline{}` (zero LastSeen → IsNewPattern fires).
+3. **Snapshot** pre-update values: `preMean = baseline.Mean`, `preStddev = baseline.Stddev()`.
+4. Classify (using pre-update stats — baseline has not been touched yet):
+   a. If `baseline.IsNewPattern(grace, now)`: kind = `AnomalyNewPattern`.
+   b. Else if `baseline.IsSpike(count, multiplier, minSamples)`: kind = `AnomalySpike`.
+   c. Else if `baseline.IsRateJump(count, factor, minSamples)`: kind = `AnomalyRateJump`.
+   d. Else: kind = `AnomalyNone`.
+5. Set `ps.Anomaly = kind`.
+6. Set `ps.Baseline = preMean` (pre-update; reflects historical baseline).
+7. Set `ps.ZScore = (count - preMean) / max(preStddev, 1.0)` (pre-update).
+8. `baseline.Update(count, alpha)` — shifts mean/variance toward current count.
+9. `baseline.LastSeen = now` — mark the pattern as recently seen.
+10. `store.Set(patternID, baseline)` — persist updated baseline.
+
+**Why snapshot before Update (steps 3→7 before step 8)?**  
+The reported `Baseline` and `ZScore` must reflect the *historical* state that
+classified the anomaly. If we reported post-update values, a count=200 into a
+mean=32 baseline would shift the mean to ~32+50=82 before we report it, making
+the alert say "baseline=82" instead of the true "baseline=32" the operator needs.
 
 For alerts with empty `Patterns` (pattern engine disabled / Phase 1 mode):
-forward as-is (do not suppress). L3 in Phase 1-only mode assumes the caller
-controls which alerts to send.
+forward as-is (do not suppress). L3 has no PatternID to look up, so it cannot
+make a baseline-driven decision; pass-through is the safe default.
 
 ---
 
@@ -462,16 +488,25 @@ Aggregator flush (every 1 minute)
 AnomalyDetector.evaluate()
         │
         │  For Pattern "ab12":
-        │    store.Get("ab12") → baseline{Mean:31.2, Variance:1.4, N:60}
+        │    store.Get("ab12") → baseline{Mean:31.2, Variance:1.4, N:60, LastSeen:recent}
+        │    preMean=31.2, preStddev=1.18
+        │    IsNewPattern? time.Since(LastSeen) < 24h → NO
         │    IsSpike(32, 3.0, 5)? → 32 > 31.2 + 3×1.18 = 34.7? NO
-        │    baseline.Update(32, 0.3), store.Set("ab12", baseline)
+        │    kind = AnomalyNone
+        │    ps.Baseline=31.2, ps.ZScore=(32-31.2)/1.18=0.68
+        │    baseline.Update(32, 0.3), baseline.LastSeen=now
+        │    store.Set("ab12", baseline)
         │    PatternSummary.Anomaly = AnomalyNone
         │
         │  For Pattern "cd34":
         │    store.Get("cd34") → not found
-        │    Create PatternBaseline{FirstSeen: now, N:0}
-        │    n==0 → IsNewPattern? YES (first ever observation)
-        │    baseline.Update(3, 0.3), store.Set("cd34", baseline)
+        │    Create PatternBaseline{} (LastSeen = zero time)
+        │    preMean=0, preStddev=0
+        │    IsNewPattern(24h, now)? time.Since(zero)>>24h → YES
+        │    kind = AnomalyNewPattern
+        │    ps.Baseline=0, ps.ZScore=(3-0)/1.0=3.0
+        │    baseline.Update(3, 0.3), baseline.LastSeen=now
+        │    store.Set("cd34", baseline)
         │    PatternSummary.Anomaly = AnomalyNewPattern
         │
         │  hasAnomaly = true (cd34 is new) → forward alert

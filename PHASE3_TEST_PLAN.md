@@ -28,7 +28,7 @@ and an integration smoke test for the full pipeline with a fake Aggregator.
 internal/anomaly/
     baseline_test.go   — PatternBaseline unit tests (21 cases)
     store_test.go      — MemoryStore unit tests (5 cases)
-    detector_test.go   — AnomalyDetector channel stage tests (12 cases)
+    detector_test.go   — AnomalyDetector channel stage tests (16 cases)
 internal/notify/
     notifier_test.go   — AnomalyKind.String() tests (5 cases)
     log_test.go        — (append) anomaly rendering tests (3 cases)
@@ -78,24 +78,26 @@ internal/notify/
 ### 3.3 IsNewPattern (4 cases)
 
 **`TestBaseline_NewPatternOnFirstObservation`**
-- `PatternBaseline{}` with `N=0` (never seen).
+- `PatternBaseline{}` — `LastSeen` is zero `time.Time{}` (pattern never seen).
 - `IsNewPattern(24h, now)` → `true`.
-- Rationale: zero-value baseline means pattern never appeared.
+- Rationale: `time.Since(zero) ≈ 56 years > 24h` → always new.
+  (No special N==0 branch needed; the zero-time logic covers it.)
 
 **`TestBaseline_NewPatternAfterGraceExpired`**
-- `FirstSeen = now - 25h`, grace = `24h`.
+- `LastSeen = now - 25h`, grace = `24h`.
 - `IsNewPattern(24h, now)` → `true`.
-- Rationale: pattern that disappeared for over 24h is treated as new.
+- Rationale: `time.Since(now-25h) = 25h > 24h` → treated as new.
+  This is the reappearing-pattern use case.
 
 **`TestBaseline_NotNewPatternWithinGrace`**
-- `FirstSeen = now - 1h`, grace = `24h`.
+- `LastSeen = now - 1h`, grace = `24h`.
 - `IsNewPattern(24h, now)` → `false`.
-- Rationale: pattern seen recently is not "new".
+- Rationale: `time.Since(now-1h) = 1h < 24h` → recently seen, not new.
 
 **`TestBaseline_NotNewPatternExactlyAtGraceBoundary`**
-- `FirstSeen = now - 24h`, grace = `24h`.
-- `IsNewPattern(24h, now)` → `false` (boundary is exclusive).
-- Rationale: boundary condition — "seen exactly grace ago" is not new.
+- `LastSeen = now - 24h`, grace = `24h`.
+- `IsNewPattern(24h, now)` → `false` (boundary is exclusive: `>`, not `>=`).
+- Rationale: `time.Since(now-24h) = 24h`, condition is `24h > 24h = false`.
 
 ---
 
@@ -234,10 +236,10 @@ All detector tests use a helper `makeAlert(service, patterns...)` to build
 - Rationale: basic NewPattern trigger.
 
 **`TestDetector_PatternReappearsAfterGrace`**
-- Pre-seed store with baseline for patID, `FirstSeen = now - 25h`, grace=24h.
+- Pre-seed store with baseline for patID, `LastSeen = now - 25h`, grace=24h.
 - Send one alert with that patID.
 - Expected: forwarded with `AnomalyNewPattern`.
-- Rationale: long-absent pattern treated as new.
+- Rationale: `time.Since(LastSeen)=25h > grace=24h` → long-absent pattern treated as new.
 
 ---
 
@@ -248,7 +250,9 @@ All detector tests use a helper `makeAlert(service, patterns...)` to build
 - Send one window with count=200.
 - Expected: alert forwarded; `PatternSummary.Anomaly = AnomalySpike`,
   `ZScore > 3.0`, `Baseline ≈ 32.0`.
-- Rationale: Spike is annotated correctly and forwarded.
+- Rationale: `Baseline` and `ZScore` are snapshotted **before** `baseline.Update` is
+  called, so they reflect the historical mean the spike was compared against, not
+  the post-update mean. Baseline ≈ 32 not ≈ 82.
 
 **`TestDetector_NoSpikeBeforeMinSamples`**
 - Send 3 windows of count=32 (below `minSamples=5`), then count=200.
@@ -272,13 +276,37 @@ All detector tests use a helper `makeAlert(service, patterns...)` to build
 
 ---
 
-### 5.6 Baseline updates (1 case)
+### 5.6 Baseline updates (3 cases)
 
 **`TestDetector_BaselineIsUpdatedAfterEachWindow`**
 - Send 5 windows of count=50 to a blank store.
 - Inspect store after the 5th window: `Mean` should be closer to 50 than to 0.
 - Expected: `|store.Get(patID).Mean - 50| < 15`.
 - Rationale: each forwarded (or suppressed) window must still update the baseline.
+
+**`TestDetector_BaselineUpdatedForSuppressedWindows`** *(missing test MT-3)*
+- Warm up 10 windows of count=32 (establishes baseline, N=10, all forwarded as NewPattern+steady).
+- Send 5 more windows of count=32 → all suppressed (AnomalyNone).
+- After the 5 suppressed windows, inspect `store.Get(patID).N` → expected 15.
+- Rationale: **critical correctness property**: suppressed windows must still call
+  `baseline.Update`. If they don't, `N` stays at 10 and the EMA never converges
+  on the true steady-state rate. This is the test most likely to catch a missing
+  `Update` call inside the `AnomalyNone` branch.
+
+**`TestDetector_SpikeWinsOverRateJump`** *(missing test MT-1)*
+- Warm up 10 windows at count=10 (Mean≈10, Stddev≈0.5 after convergence).
+- Send count=200: satisfies both Spike (200 > 10+3×0.5) AND RateJump (200 > 5×10=50).
+- Expected: `PatternSummary.Anomaly = AnomalySpike`, not `AnomalyRateJump`.
+- Rationale: priority rule `NewPattern > Spike > RateJump` (as documented in the design)
+  must be enforced. Spike takes precedence over RateJump.
+
+**`TestDetector_Phase1AlertsForwardedAsIs`** *(missing test MT-2)*
+- Build `notify.Alert{Patterns: nil}` (or `Patterns: []PatternSummary{}`).
+- Send through the detector.
+- Expected: alert forwarded unchanged; no panic; zero anomaly classification.
+- Rationale: when the pattern engine is disabled (Phase 1 mode), alerts have no
+  PatternSummary entries. The detector has no PatternID to look up, so it must
+  forward the alert as-is without modification.
 
 ---
 
@@ -337,18 +365,22 @@ TestAnomalyKind_String:
 
 Setup:
 - `AnomalyConfig{SpikeMultiplier:3.0, EMAAlpha:0.3, MinSamples:5, NewPatternGrace:24h, RateJumpFactor:5.0}`
-- Pre-warm the store programmatically: 10 `baseline.Update(32, 0.3)` calls.
-- Note: set `N=10` directly (or via 10 calls) before passing to detector.
+- Use a fake clock set to `now`.
+- **Warm-up strategy**: send 20 alerts with count=32 through the detector's `Run()` pipeline
+  itself (drain all output in a goroutine). This naturally creates `AnomalyNewPattern` for
+  the first window, then `AnomalyNone` for subsequent ones. Do NOT manipulate internal struct
+  fields directly — that leaks the `PatternBaseline` API and makes tests brittle.
+- After warm-up: discard all output from those windows.
 
 Steps:
-1. Send 5 alerts with count=32 (steady-state, N was already 10 → no new pattern, no spike) → count 0 forwarded.
-2. Send 1 alert with count=200 → should be forwarded with `AnomalySpike`.
+1. Send 5 alerts with count=32 (baseline well-established → suppressed, 0 forwarded).
+2. Send 1 alert with count=200 → forwarded with `AnomalySpike`.
 3. Send 3 more alerts with count=32 → suppressed again.
 
 Assertions:
 - Exactly 1 alert forwarded (the spike).
 - That alert's `PatternSummary[0].Anomaly == AnomalySpike`.
-- `ZScore > 3.0`.
+- `ZScore > 3.0` (reflecting pre-update mean of ≈32, not the post-update shifted mean).
 
 ---
 
