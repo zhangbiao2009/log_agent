@@ -60,7 +60,7 @@ type Alert struct {
 
 // Notifier is the interface all notification channels implement.
 type Notifier interface {
-	Send(ctx context.Context, alert Alert) error
+	Send(ctx context.Context, incident Incident) error
 	Name() string
 }
 
@@ -78,10 +78,10 @@ func NewDispatcher(notifiers ...Notifier) *Dispatcher {
 	}
 }
 
-// Dispatch sends the alert to all notifiers concurrently.
+// Dispatch sends the incident to all notifiers concurrently.
 // Logs errors from individual notifiers but does not fail the pipeline.
 // Returns an error if any notifier failed.
-func (d *Dispatcher) Dispatch(ctx context.Context, alert Alert) error {
+func (d *Dispatcher) Dispatch(ctx context.Context, incident Incident) error {
 	if len(d.notifiers) == 0 {
 		return nil
 	}
@@ -99,7 +99,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, alert Alert) error {
 			sendCtx, cancel := context.WithTimeout(ctx, d.timeout)
 			defer cancel()
 
-			if err := n.Send(sendCtx, alert); err != nil {
+			if err := n.Send(sendCtx, incident); err != nil {
 				slog.Error("notifier failed", "notifier", n.Name(), "err", err)
 				mu.Lock()
 				errs = append(errs, fmt.Sprintf("%s: %v", n.Name(), err))

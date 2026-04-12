@@ -24,8 +24,13 @@ func NewSlackNotifier(webhookURL string) *SlackNotifier {
 
 func (s *SlackNotifier) Name() string { return "slack" }
 
-func (s *SlackNotifier) Send(ctx context.Context, alert Alert) error {
-	msg := s.formatMessage(alert)
+func (s *SlackNotifier) Send(ctx context.Context, incident Incident) error {
+	var msg slackMessage
+	if incident.IsSingleAlert() {
+		msg = s.formatAlertMessage(incident.Alerts[0])
+	} else {
+		msg = s.formatIncidentMessage(incident)
+	}
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal slack message: %w", err)
@@ -59,7 +64,7 @@ type slackText struct {
 	Text string `json:"text"`
 }
 
-func (s *SlackNotifier) formatMessage(alert Alert) slackMessage {
+func (s *SlackNotifier) formatAlertMessage(alert Alert) slackMessage {
 	emoji := levelEmoji(alert.Level)
 	header := fmt.Sprintf("%s *%s* — %s (%d errors in last %s)",
 		emoji, alert.Level, alert.Service, alert.Count, alert.Window)
@@ -115,6 +120,37 @@ func levelEmoji(level string) string {
 	default:
 		return "\u2139\uFE0F"
 	}
+}
+
+func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
+	header := fmt.Sprintf("\U0001F534 *INCIDENT %s* — %d services affected\nRoot cause: %s (deepest in chain)\nChain: %s",
+		incident.ID, len(incident.Services), incident.RootService,
+		strings.Join(incident.DepChain, " → "))
+	blocks := []slackBlock{
+		{Type: "section", Text: &slackText{Type: "mrkdwn", Text: header}},
+	}
+	for _, alert := range incident.Alerts {
+		alertHeader := fmt.Sprintf("*[%s]* %d× %s", slackEscape(alert.Service), alert.Count, alert.Level)
+		blocks = append(blocks, slackBlock{
+			Type: "section",
+			Text: &slackText{Type: "mrkdwn", Text: alertHeader},
+		})
+		for _, p := range alert.Patterns {
+			var sb strings.Builder
+			badge := anomalyBadge(p)
+			sb.WriteString(fmt.Sprintf("%s*[%dx %s]* `%s`\n", badge, p.Count, p.Level, slackEscape(p.Template)))
+			for _, line := range p.SampleLines {
+				sb.WriteString("• ")
+				sb.WriteString(slackEscape(line))
+				sb.WriteString("\n")
+			}
+			blocks = append(blocks, slackBlock{
+				Type: "section",
+				Text: &slackText{Type: "mrkdwn", Text: sb.String()},
+			})
+		}
+	}
+	return slackMessage{Blocks: blocks}
 }
 
 // anomalyBadge returns a Slack emoji prefix for anomalous patterns.

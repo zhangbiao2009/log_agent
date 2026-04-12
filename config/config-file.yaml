@@ -30,6 +30,11 @@ anomaly:
   min_samples: 3            # spike/rate-jump activate after 3 baseline windows
   new_pattern_grace: 24h   # same as production; patterns only flagged New once per day
 
+correlator:
+  enabled: true
+  window: 5s                # short window matching aggregation for local testing
+  dependencies_file: config/dependencies.yaml
+
 notification:
   channels:
     - type: log

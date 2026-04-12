@@ -20,7 +20,25 @@ func NewLogNotifier(logger *slog.Logger) *LogNotifier {
 
 func (l *LogNotifier) Name() string { return "log" }
 
-func (l *LogNotifier) Send(_ context.Context, alert Alert) error {
+func (l *LogNotifier) Send(_ context.Context, incident Incident) error {
+	if incident.IsSingleAlert() {
+		return l.sendAlert(incident.Alerts[0])
+	}
+
+	// Multi-alert incident header.
+	l.Logger.Info("INCIDENT",
+		"id", incident.ID,
+		"root", incident.RootService,
+		"services", strings.Join(incident.Services, ", "),
+		"chain", strings.Join(incident.DepChain, " → "),
+	)
+	for _, alert := range incident.Alerts {
+		l.sendAlert(alert)
+	}
+	return nil
+}
+
+func (l *LogNotifier) sendAlert(alert Alert) error {
 	if len(alert.Patterns) > 0 {
 		var sb strings.Builder
 		for _, p := range alert.Patterns {

@@ -21,8 +21,9 @@ func TestLogNotifier_Send(t *testing.T) {
 		SampleLines: []string{"line1", "line2"},
 		Timestamp:   time.Now(),
 	}
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
 
-	err := ln.Send(context.Background(), alert)
+	err := ln.Send(context.Background(), inc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +53,8 @@ func TestLogNotifier_NilLogger(t *testing.T) {
 		t.Fatal("expected non-nil default logger")
 	}
 	// Should not panic
-	err := ln.Send(context.Background(), Alert{Service: "svc", Level: "WARN", Count: 1, Window: time.Minute})
+	alert := Alert{Service: "svc", Level: "WARN", Count: 1, Window: time.Minute}
+	err := ln.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,8 +76,9 @@ func TestLogNotifier_PatternRendering(t *testing.T) {
 		},
 		Timestamp: time.Now(),
 	}
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
 
-	err := ln.Send(context.Background(), alert)
+	err := ln.Send(context.Background(), inc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +117,8 @@ func TestLogNotifier_PatternWithSpikeAnomaly(t *testing.T) {
 			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
 		},
 	}
-	if err := ln.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	output := buf.String()
@@ -140,7 +144,8 @@ func TestLogNotifier_PatternWithNewPattern(t *testing.T) {
 			{Template: "new error <*>", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
 		},
 	}
-	if err := ln.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	output := buf.String()
@@ -163,7 +168,8 @@ func TestLogNotifier_PatternWithNoAnomaly(t *testing.T) {
 			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
 		},
 	}
-	if err := ln.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	output := buf.String()

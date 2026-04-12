@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/anomaly"
+	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/correlator"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/pattern"
@@ -24,6 +25,7 @@ type Config struct {
 	Notification NotificationConfig `yaml:"notification"`
 	Pattern      PatternConfig      `yaml:"pattern"`
 	Anomaly      AnomalyConfig      `yaml:"anomaly"`
+	Correlator   CorrelatorConfig   `yaml:"correlator"`
 }
 
 // SourceConfig selects which log source to use.
@@ -77,6 +79,12 @@ type AnomalyConfig struct {
 type ChannelConfig struct {
 	Type       string `yaml:"type"`
 	WebhookURL string `yaml:"webhook_url"`
+}
+
+type CorrelatorConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Window           string `yaml:"window"`
+	DependenciesFile string `yaml:"dependencies_file"`
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -249,8 +257,28 @@ func run() error {
 		anomalous = alerts
 	}
 
-	for alert := range anomalous {
-		if err := dispatcher.Dispatch(ctx, alert); err != nil {
+	// Stage 5: Correlator (or bypass).
+	var incidents <-chan notify.Incident
+	if cfg.Correlator.Enabled {
+		graph, err := correlator.LoadFromYAML(cfg.Correlator.DependenciesFile)
+		if err != nil {
+			return fmt.Errorf("load dependencies: %w", err)
+		}
+		correlatorWindow := parseDuration(cfg.Correlator.Window, 2*time.Minute)
+		c := correlator.NewCorrelator(correlator.CorrelatorConfig{
+			Window: correlatorWindow,
+		}, graph)
+		incidents = c.Run(ctx, anomalous)
+		slog.Info("correlator enabled",
+			"window", correlatorWindow,
+			"dependencies_file", cfg.Correlator.DependenciesFile,
+		)
+	} else {
+		incidents = correlator.WrapAlerts(ctx, anomalous)
+	}
+
+	for inc := range incidents {
+		if err := dispatcher.Dispatch(ctx, inc); err != nil {
 			slog.Error("dispatch failed", "err", err)
 		}
 	}

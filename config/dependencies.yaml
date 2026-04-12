@@ -1,0 +1,12 @@
+# Service dependency graph for cross-service correlation.
+# Each service lists the downstream services it calls.
+# The correlator uses this to group related alerts into incidents.
+services:
+  order-service:
+    calls: [payment-service, inventory-service, notification-service]
+  payment-service:
+    calls: [bank-gateway, fraud-detection]
+  inventory-service:
+    calls: [warehouse-db]
+  notification-service:
+    calls: [email-provider, sms-provider]

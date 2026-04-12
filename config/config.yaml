@@ -27,6 +27,11 @@ anomaly:
   min_samples: 5            # windows before spike/rate-jump detection activates
   new_pattern_grace: 24h   # patterns unseen longer than this are flagged New
 
+correlator:
+  enabled: true
+  window: 2m
+  dependencies_file: config/dependencies.yaml
+
 notification:
   channels:
     - type: log

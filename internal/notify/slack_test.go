@@ -37,8 +37,9 @@ func TestSlackNotifier_Send(t *testing.T) {
 		},
 		Timestamp: time.Now(),
 	}
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
 
-	err := sn.Send(context.Background(), alert)
+	err := sn.Send(context.Background(), inc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +76,8 @@ func TestSlackNotifier_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	err := sn.Send(context.Background(), Alert{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute})
+	alert := Alert{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute}
+	err := sn.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -150,7 +152,8 @@ func TestSlackNotifier_PatternBlocks(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	if err := sn.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -200,7 +203,7 @@ func TestSlackNotifier_FallsBackToSamples(t *testing.T) {
 		Timestamp:   time.Now(),
 	}
 
-	if err := sn.Send(context.Background(), alert); err != nil {
+	if err := sn.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -238,7 +241,8 @@ func TestSlackNotifier_SpikePatternHasEmoji(t *testing.T) {
 			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
 		},
 	}
-	if err := sn.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -278,7 +282,8 @@ func TestSlackNotifier_NewPatternHasEmoji(t *testing.T) {
 			{Template: "new error", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
 		},
 	}
-	if err := sn.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -318,7 +323,8 @@ func TestSlackNotifier_NoAnomalyPatternHasNoEmoji(t *testing.T) {
 			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
 		},
 	}
-	if err := sn.Send(context.Background(), alert); err != nil {
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

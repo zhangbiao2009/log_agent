@@ -29,7 +29,7 @@ type Clock interface {
 
 type realClock struct{}
 
-func (realClock) Now() time.Time                        { return time.Now() }
+func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 type bucketKey struct {
