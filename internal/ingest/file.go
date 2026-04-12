@@ -19,11 +19,22 @@ type FileConfig struct {
 }
 
 // fileRecord is the JSON shape of each line in the NDJSON fixture file.
+// Two mutually exclusive shapes are supported:
+//
+//  1. Log line:   {"service":"...","timestamp":"...","raw":"..."}
+//  2. Pause sentinel: {"pause":"5s"}
+//     The FileSource sleeps for the given duration, allowing the Aggregator's
+//     real-clock window timer to fire and flush the current window before
+//     the next batch of log lines arrives.
 type fileRecord struct {
+	// Log line fields
 	Service   string `json:"service"`
 	Timestamp string `json:"timestamp"` // RFC3339; defaults to now if blank
 	Level     string `json:"level"`     // optional; Filter will infer if blank
 	Raw       string `json:"raw"`
+
+	// Sentinel field — mutually exclusive with the log line fields above.
+	Pause string `json:"pause"` // Go duration string, e.g. "5s"
 }
 
 // FileSource implements LogSource by replaying an NDJSON file.
@@ -64,6 +75,23 @@ func (s *FileSource) Stream(ctx context.Context) (<-chan LogLine, error) {
 			if err := json.Unmarshal([]byte(line), &rec); err != nil {
 				slog.Warn("file source: skipping malformed line",
 					"line_num", lineNum, "err", err)
+				continue
+			}
+
+			// Handle pause sentinel: sleep to let the Aggregator window timer fire.
+			if rec.Pause != "" {
+				d, err := time.ParseDuration(rec.Pause)
+				if err != nil {
+					slog.Warn("file source: invalid pause duration, skipping",
+						"line_num", lineNum, "pause", rec.Pause)
+					continue
+				}
+				slog.Info("file source: pausing between windows", "duration", d)
+				select {
+				case <-time.After(d):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
