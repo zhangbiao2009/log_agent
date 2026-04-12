@@ -24,9 +24,9 @@ smoke test for the correlator pipeline with multi-service alerts.
 
 ```
 internal/correlator/
-    depgraph_test.go     — DependencyGraph unit tests (14 cases)
+    depgraph_test.go     — DependencyGraph unit tests (15 cases)
     incident_test.go     — Incident ID + helpers (4 cases)
-    correlator_test.go   — Correlator pipeline tests (16 cases)
+    correlator_test.go   — Correlator pipeline tests (18 cases)
     wrap_test.go         — WrapAlerts bypass tests (3 cases)
 internal/notify/
     log_test.go          — (append) incident rendering tests (3 cases)
@@ -36,7 +36,7 @@ internal/notify/
 
 ---
 
-## 3. `depgraph_test.go` — DependencyGraph (14 cases)
+## 3. `depgraph_test.go` — DependencyGraph (15 cases)
 
 ### 3.1 Loading (3 cases)
 
@@ -73,7 +73,7 @@ internal/notify/
 - `CalledBy("nonexistent")` → `[]`.
 - Rationale: unknown services return empty, no panic.
 
-### 3.3 Connected (3 cases)
+### 3.3 Connected (4 cases)
 
 **`TestDepGraph_ConnectedDirectEdge`**
 - `A → B`. `Connected("A", "B")` → `true`. `Connected("B", "A")` → `true`.
@@ -87,6 +87,11 @@ internal/notify/
 - `A → B`, `C → D` (two disconnected components).
 - `Connected("A", "D")` → `false`.
 - Rationale: disconnected services are not correlated.
+
+**`TestDepGraph_ConnectedSelf`**
+- `Connected("A", "A")` → `true`.
+- Rationale: a service is always connected to itself; needed for
+  grouping when multiple alerts arrive from the same service.
 
 ### 3.4 Depth (3 cases)
 
@@ -142,7 +147,7 @@ internal/notify/
 
 ---
 
-## 5. `correlator_test.go` — Correlator Pipeline (16 cases)
+## 5. `correlator_test.go` — Correlator Pipeline (18 cases)
 
 All correlator tests use helpers:
 - `makeAlert(service, patterns...)` — same as Phase 3 detector tests.
@@ -174,16 +179,20 @@ All correlator tests use helpers:
 - Rationale: lone alerts are emitted as single-service incidents.
 
 **`TestCorrelator_MultipleAlertsFromSameService`**
-- Send 3 alerts for service `A` within one window.
+- Send 3 alerts for service `A` within one window, each with a different
+  pattern template to distinguish them.
 - Expected: one Incident with `Services=["A"]`, `len(Alerts)==3`.
-- Rationale: multiple windows of the same service are grouped.
+  Verify all 3 alerts are present (not deduplicated) by checking
+  their pattern templates.
+- Rationale: multiple windows of the same service are grouped; no
+  accidental dedup.
 
 **`TestCorrelator_UnknownServiceNotInGraph`**
 - Graph has A→B→C. Send alert for service `X` (not in graph).
 - Expected: Incident with `Services=["X"]`, no dep chain.
 - Rationale: services outside the graph are isolated.
 
-### 5.3 Multi-Service Correlation (4 cases)
+### 5.3 Multi-Service Correlation (5 cases)
 
 **`TestCorrelator_RelatedServicesGrouped`**
 - Graph: `A → B → D`. Alerts for `A` and `D` within one window.
@@ -207,6 +216,14 @@ All correlator tests use helpers:
 - Expected: one Incident (A and C connected through B).
   `RootService="C"`.
 - Rationale: transitive connectivity via non-alerting intermediate service.
+
+**`TestCorrelator_DepChainFanOut`**
+- Graph: `A → [B, C]`. Alerts for all three.
+- Expected: one Incident with B and C at same depth (1), A at depth 0.
+  `DepChain` includes all three, sorted by depth descending then
+  alphabetically: `["B", "C", "A"]`.
+- Rationale: fan-out topology produces a flat chain; non-alerting
+  intermediates are excluded, alerting siblings are both listed.
 
 ### 5.4 Root Cause Selection (3 cases)
 
@@ -337,6 +354,8 @@ Assertions:
 - `RootService == "bank-gw"` (depth 2, deepest).
 - `DepChain == ["bank-gw", "payment-svc", "order-svc"]`.
 - `len(Alerts) == 3`.
+- `ID` is non-empty and deterministic: running the same test twice
+  produces the same ID (verifies `Truncate`-based window floor).
 
 ---
 

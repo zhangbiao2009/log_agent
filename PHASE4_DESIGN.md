@@ -69,7 +69,10 @@ receives `Incident` objects regardless of configuration.
 
 ### 3.1 Incident
 
-The core output type. Lives in `internal/correlator/`.
+The core output type. Lives in `internal/notify/` (alongside `Alert`) to
+avoid a circular import between `correlator` → `notify` and `notify` →
+`correlator`. The correlator package imports `notify` for both `Alert` and
+`Incident`; the notify package never imports `correlator`.
 
 ```go
 type Incident struct {
@@ -77,15 +80,16 @@ type Incident struct {
     Services    []string       // all affected services (sorted)
     RootService string         // suspected root cause (deepest in dep chain)
     DepChain    []string       // dependency path: root → ... → furthest affected
-    Alerts      []notify.Alert // all correlated alerts in this incident
+    Alerts      []Alert        // all correlated alerts in this incident
     OpenedAt    time.Time      // timestamp of earliest alert
     Window      time.Duration  // correlation window used
 }
 ```
 
-**ID generation:** `sha256(sorted_services + window_start)[:12]` — deterministic,
-so the same set of services in the same window always produces the same ID.
-This supports future deduplication (L6).
+**ID generation:** `sha256(sorted_services + window_start_floor)[:12]`.
+`window_start_floor = OpenedAt.Truncate(correlation_window)` — truncating
+to the window boundary makes the ID deterministic regardless of alert
+arrival order within the window. This supports future deduplication (L6).
 
 ### 3.2 DependencyGraph
 
@@ -103,8 +107,9 @@ type DependencyGraph struct {
 |---|---|---|
 | `Calls` | `(svc) []string` | Direct downstream dependencies |
 | `CalledBy` | `(svc) []string` | Direct upstream dependents |
-| `Connected` | `(a, b) bool` | Reachability in either direction |
-| `Depth` | `(svc) int` | Max depth from any root (0 = root/no callers) |
+| `Connected` | `(a, b) bool` | Same connected component (undirected) |
+| `Component` | `(svc) int` | Component ID for grouping (O(1) lookup) |
+| `Depth` | `(svc) int` | BFS distance from nearest root (0 = root/no callers) |
 | `ShortestPath` | `(from, to) []string` | Shortest directed path, nil if unreachable |
 
 **YAML format** (same as DESIGN.md):
@@ -152,19 +157,31 @@ On flush:
 
 ### 4.2 Grouping
 
-**Algorithm:** Union-Find on buffered alert services.
+**Algorithm:** Pre-computed connected components + alert lookup.
+
+At graph load time, compute the **undirected connected component** of each
+service (treat all directed edges as undirected, then BFS/DFS). This is
+O(V+E) once. Store a `component map[string]int` mapping each service to
+its component ID.
+
+At flush time:
 
 ```
-For each pair (A, B) of services with alerts in the buffer:
-    if graph.Connected(A, B):
-        union(A, B)
+For each alerting service S:
+    group_id = graph.Component(S)   // O(1) lookup
+    add alert to groups[group_id]
 
-Each resulting group → one Incident
+Services not in the graph → each gets its own unique group.
+Each resulting group → one Incident.
 ```
 
-`Connected(A, B)` returns true if there is a directed path from A to B **or**
-from B to A (bidirectional reachability). This handles the case where the
-root cause is deeper than the alerting service.
+This replaces the O(N² × (V+E)) pairwise `Connected` approach with O(N)
+grouping. The `Connected(A, B)` method is still available for queries but
+is no longer used in the hot path.
+
+`Connected(A, B)` returns true if A and B are in the same connected
+component (bidirectional reachability via undirected edges). This handles
+the case where the root cause is deeper than the alerting service.
 
 ### 4.3 Root Cause Heuristic
 
@@ -177,18 +194,27 @@ bank-gateway and both are erroring, bank-gateway is more likely the root
 cause.
 
 **Tie-breaking:** If multiple services share the same depth, pick the one
-whose alert has the highest ZScore (strongest anomaly signal).
+whose alert has the highest ZScore (strongest anomaly signal). For alerts
+with multiple `PatternSummary` entries, use `max(ps.ZScore for ps in
+alert.Patterns)` — the strongest anomaly signal within the alert.
 
 ### 4.4 Dependency Chain Construction
 
-After selecting the root service, build the dependency chain:
-- Start from the root service.
-- Find shortest paths from the root to every other affected service
-  (reversed edges — root is deepest, chain goes toward entry points).
-- Emit as a flattened path: `[root, intermediate1, ..., entry-point]`.
+After selecting the root service, build the dependency chain by sorting
+all affected services by depth (deepest first). This is simpler and more
+robust than path computation, and handles fan-out topologies correctly.
 
-If no direct path exists (services connected through a shared ancestor),
-list all services sorted by depth (deepest first).
+```
+DepChain = sort(affected_services, key=Depth, descending)
+```
+
+Example: `A → B → C`, all three alerting → `DepChain = ["C", "B", "A"]`.
+
+For fan-out (`A → [B, C]`, all alerting, B and C at same depth):
+`DepChain = ["B", "C", "A"]` (ties broken alphabetically).
+
+Non-alerting intermediate services are **not** included in `DepChain` —
+only services that actually produced alerts appear.
 
 ---
 
@@ -232,7 +258,8 @@ This matches the Aggregator's flush model exactly.
 ## 6. Notification Changes
 
 The Dispatcher and Notifiers currently operate on `notify.Alert`. Phase 4
-changes them to operate on `correlator.Incident`.
+changes them to operate on `notify.Incident` (the `Incident` type lives in
+`notify` to avoid a circular import — see §3.1).
 
 ### 6.1 Dispatcher
 
@@ -241,7 +268,7 @@ changes them to operate on `correlator.Incident`.
 func (d *Dispatcher) Dispatch(ctx context.Context, alert Alert) error
 
 // After (Phase 4):
-func (d *Dispatcher) Dispatch(ctx context.Context, incident correlator.Incident) error
+func (d *Dispatcher) Dispatch(ctx context.Context, incident Incident) error
 ```
 
 ### 6.2 Notifier Interface
@@ -255,7 +282,7 @@ type Notifier interface {
 
 // After (Phase 4):
 type Notifier interface {
-    Send(ctx context.Context, incident correlator.Incident) error
+    Send(ctx context.Context, incident Incident) error
     Name() string
 }
 ```
@@ -316,10 +343,10 @@ bypass correlation entirely. All existing behavior is preserved.
 ## 8. Package Structure
 
 ```
+internal/notify/\n    incident.go        — Incident type + ID generation (avoids circular import)
 internal/correlator/
-    depgraph.go        — DependencyGraph (load YAML, Connected, Depth, etc.)
+    depgraph.go        — DependencyGraph (load YAML, Connected, Component, Depth, etc.)
     correlator.go      — Correlator pipeline stage + CorrelatorConfig
-    incident.go        — Incident type + ID generation
     wrap.go            — WrapAlerts bypass function
 config/
     dependencies.yaml  — static service dependency graph
@@ -337,7 +364,7 @@ config/
 | Transitive dependency (A→B→C, A+C alert but not B) | A and C grouped (Connected via B); B listed in dep chain even though it didn't alert |
 | Two disconnected groups alert simultaneously | Two separate Incidents emitted |
 | No alerts in a window | No Incidents emitted (empty flush) |
-| Circular dependency in graph | Connected returns true for all cycle members; Depth uses max acyclic depth (BFS) |
+| Circular dependency in graph | Connected returns true for all cycle members; Depth = BFS distance from nearest root (service with no callers). Standard `visited` set prevents re-visiting — O(V+E) |
 
 ---
 
@@ -356,12 +383,15 @@ config/
 
 ## 11. Implementation Plan
 
-1. **`depgraph.go`** — Dependency graph loader + query methods.
-2. **`incident.go`** — Incident struct + ID generation.
-3. **`correlator.go`** — Pipeline stage with buffer + flush + grouping.
-4. **`wrap.go`** — WrapAlerts bypass.
-5. **Update `notify/`** — Change Notifier interface to accept Incident.
-   Update LogNotifier and SlackNotifier rendering.
+1. **`internal/notify/incident.go`** — Incident struct + ID generation
+   (lives in `notify` to avoid circular import).
+2. **`internal/correlator/depgraph.go`** — Dependency graph loader + query
+   methods (Connected, Component, Depth, ShortestPath).
+3. **`internal/correlator/correlator.go`** — Pipeline stage with buffer +
+   flush + component-based grouping + root cause selection.
+4. **`internal/correlator/wrap.go`** — WrapAlerts bypass.
+5. **Update `internal/notify/`** — Change Notifier interface to accept
+   Incident. Update LogNotifier and SlackNotifier rendering.
 6. **Update `cmd/agent/main.go`** — Add correlator wiring + config.
 7. **Create `config/dependencies.yaml`** — Sample dependency graph.
 8. **Update `testdata/sample_logs.ndjson`** — Multi-service fixture
