@@ -341,3 +341,105 @@ func TestSlackNotifier_NoAnomalyPatternHasNoEmoji(t *testing.T) {
 		}
 	}
 }
+
+// --- Incident rendering tests ---
+
+func TestSlackNotifier_MultiServiceIncidentBlocks(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "abc123",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	// Header + at least 2 service sections.
+	if len(blocks) < 3 {
+		t.Fatalf("expected at least 3 blocks, got %d", len(blocks))
+	}
+	headerText := blocks[0].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	if !contains(headerText, "INCIDENT") {
+		t.Errorf("expected INCIDENT in header, got: %s", headerText)
+	}
+	if !contains(headerText, "svc-B") {
+		t.Errorf("expected root cause svc-B in header, got: %s", headerText)
+	}
+}
+
+func TestSlackNotifier_SingleAlertIncidentBackwardCompat(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{"svc-A"}}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	headerText := blocks[0].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	// Should NOT contain INCIDENT header (backward compat).
+	if contains(headerText, "INCIDENT") {
+		t.Errorf("single-alert incident should not have INCIDENT header, got: %s", headerText)
+	}
+}
+
+func TestSlackNotifier_IncidentDepChainInHeader(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "xyz789",
+		Services:    []string{"A", "B", "C"},
+		RootService: "C",
+		DepChain:    []string{"C", "B", "A"},
+		Alerts: []Alert{
+			{Service: "C", Level: "ERROR", Count: 1, Window: time.Minute},
+			{Service: "B", Level: "ERROR", Count: 1, Window: time.Minute},
+			{Service: "A", Level: "ERROR", Count: 1, Window: time.Minute},
+		},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	headerText := blocks[0].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	if !contains(headerText, "C") || !contains(headerText, "B") || !contains(headerText, "A") {
+		t.Errorf("expected dep chain in header, got: %s", headerText)
+	}
+}

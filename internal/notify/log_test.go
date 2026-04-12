@@ -177,3 +177,80 @@ func TestLogNotifier_PatternWithNoAnomaly(t *testing.T) {
 		t.Errorf("expected no anomaly tag in output, got: %s", output)
 	}
 }
+
+// --- Incident rendering tests ---
+
+func TestLogNotifier_MultiServiceIncident(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "abc123",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		},
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !stringContains(output, "INCIDENT") {
+		t.Errorf("expected INCIDENT in output, got: %s", output)
+	}
+	if !stringContains(output, "svc-B") {
+		t.Errorf("expected root service svc-B in output, got: %s", output)
+	}
+	if !stringContains(output, "svc-A") {
+		t.Errorf("expected svc-A in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_SingleAlertIncidentRendersAsAlert(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	alert := Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := Incident{Alerts: []Alert{alert}, Services: []string{"svc-A"}}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if stringContains(output, "INCIDENT") {
+		t.Errorf("single-alert incident should not have INCIDENT header, got: %s", output)
+	}
+	if !stringContains(output, "ALERT") {
+		t.Errorf("expected ALERT in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_IncidentWithDepChain(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "xyz789",
+		Services:    []string{"A", "B", "C"},
+		RootService: "C",
+		DepChain:    []string{"C", "B", "A"},
+		Alerts: []Alert{
+			{Service: "C", Level: "ERROR", Count: 1, Window: time.Minute},
+			{Service: "B", Level: "ERROR", Count: 1, Window: time.Minute},
+			{Service: "A", Level: "ERROR", Count: 1, Window: time.Minute},
+		},
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	// The chain should be rendered with arrow separators.
+	if !stringContains(output, "C") || !stringContains(output, "B") || !stringContains(output, "A") {
+		t.Errorf("expected dep chain services in output, got: %s", output)
+	}
+}
