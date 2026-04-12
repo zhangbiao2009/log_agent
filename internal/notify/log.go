@@ -22,23 +22,52 @@ func (l *LogNotifier) Name() string { return "log" }
 
 func (l *LogNotifier) Send(_ context.Context, incident Incident) error {
 	if incident.IsSingleAlert() {
-		return l.sendAlert(incident.Alerts[0])
+		l.sendAlert(incident.Alerts[0])
+		if incident.Diagnosis != "" {
+			l.sendDiagnosis(incident)
+		}
+		return nil
 	}
 
 	// Multi-alert incident header.
-	l.Logger.Info("INCIDENT",
+	attrs := []any{
 		"id", incident.ID,
 		"root", incident.RootService,
+	}
+	if incident.Severity != "" {
+		attrs = append(attrs, "severity", incident.Severity)
+	}
+	attrs = append(attrs,
 		"services", strings.Join(incident.Services, ", "),
 		"chain", strings.Join(incident.DepChain, " → "),
 	)
+	l.Logger.Info("INCIDENT", attrs...)
+
+	if incident.Diagnosis != "" {
+		l.sendDiagnosis(incident)
+	}
+
 	for _, alert := range incident.Alerts {
 		l.sendAlert(alert)
 	}
 	return nil
 }
 
-func (l *LogNotifier) sendAlert(alert Alert) error {
+func (l *LogNotifier) sendDiagnosis(inc Incident) {
+	l.Logger.Info("DIAGNOSIS",
+		"severity", inc.Severity,
+		"diagnosis", inc.Diagnosis,
+	)
+	if len(inc.Suggestions) > 0 {
+		var sb strings.Builder
+		for i, s := range inc.Suggestions {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, s))
+		}
+		l.Logger.Info("SUGGESTIONS", "actions", sb.String())
+	}
+}
+
+func (l *LogNotifier) sendAlert(alert Alert) {
 	if len(alert.Patterns) > 0 {
 		var sb strings.Builder
 		for _, p := range alert.Patterns {
@@ -52,7 +81,7 @@ func (l *LogNotifier) sendAlert(alert Alert) error {
 			"window", alert.Window.String(),
 			"patterns", sb.String(),
 		)
-		return nil
+		return
 	}
 
 	samples := ""
@@ -70,7 +99,6 @@ func (l *LogNotifier) sendAlert(alert Alert) error {
 		"window", alert.Window.String(),
 		"samples", samples,
 	)
-	return nil
 }
 
 // anomalyTag returns the annotation suffix for a PatternSummary, e.g. " SPIKE z=4.2".

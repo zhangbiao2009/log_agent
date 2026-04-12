@@ -28,6 +28,9 @@ func (s *SlackNotifier) Send(ctx context.Context, incident Incident) error {
 	var msg slackMessage
 	if incident.IsSingleAlert() {
 		msg = s.formatAlertMessage(incident.Alerts[0])
+		if incident.Diagnosis != "" {
+			msg.Blocks = append(msg.Blocks, s.diagnosisBlocks(incident)...)
+		}
 	} else {
 		msg = s.formatIncidentMessage(incident)
 	}
@@ -123,12 +126,22 @@ func levelEmoji(level string) string {
 }
 
 func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
-	header := fmt.Sprintf("\U0001F534 *INCIDENT %s* — %d services affected\nRoot cause: %s (deepest in chain)\nChain: %s",
-		incident.ID, len(incident.Services), incident.RootService,
+	severityEmoji := "\U0001F534"
+	headerText := fmt.Sprintf("%s *INCIDENT %s*", severityEmoji, incident.ID)
+	if incident.Severity != "" {
+		headerText = fmt.Sprintf("%s *%s INCIDENT %s*", severityEmoji, incident.Severity, incident.ID)
+	}
+	headerText += fmt.Sprintf(" — %d services affected\nRoot cause: %s (deepest in chain)\nChain: %s",
+		len(incident.Services), incident.RootService,
 		strings.Join(incident.DepChain, " → "))
 	blocks := []slackBlock{
-		{Type: "section", Text: &slackText{Type: "mrkdwn", Text: header}},
+		{Type: "section", Text: &slackText{Type: "mrkdwn", Text: headerText}},
 	}
+
+	if incident.Diagnosis != "" {
+		blocks = append(blocks, s.diagnosisBlocks(incident)...)
+	}
+
 	for _, alert := range incident.Alerts {
 		alertHeader := fmt.Sprintf("*[%s]* %d× %s", slackEscape(alert.Service), alert.Count, alert.Level)
 		blocks = append(blocks, slackBlock{
@@ -151,6 +164,27 @@ func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
 		}
 	}
 	return slackMessage{Blocks: blocks}
+}
+
+func (s *SlackNotifier) diagnosisBlocks(incident Incident) []slackBlock {
+	var blocks []slackBlock
+	diagText := fmt.Sprintf("\U0001F4CB *Diagnosis:*\n%s", slackEscape(incident.Diagnosis))
+	blocks = append(blocks, slackBlock{
+		Type: "section",
+		Text: &slackText{Type: "mrkdwn", Text: diagText},
+	})
+	if len(incident.Suggestions) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\U0001F4A1 *Suggested actions:*\n")
+		for i, s := range incident.Suggestions {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, slackEscape(s)))
+		}
+		blocks = append(blocks, slackBlock{
+			Type: "section",
+			Text: &slackText{Type: "mrkdwn", Text: sb.String()},
+		})
+	}
+	return blocks
 }
 
 // anomalyBadge returns a Slack emoji prefix for anomalous patterns.

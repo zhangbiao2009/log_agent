@@ -11,6 +11,7 @@ import (
 
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/anomaly"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/correlator"
+	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/diagnosis"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/pattern"
@@ -26,6 +27,7 @@ type Config struct {
 	Pattern      PatternConfig      `yaml:"pattern"`
 	Anomaly      AnomalyConfig      `yaml:"anomaly"`
 	Correlator   CorrelatorConfig   `yaml:"correlator"`
+	Diagnosis    DiagnosisConfig    `yaml:"diagnosis"`
 }
 
 // SourceConfig selects which log source to use.
@@ -85,6 +87,15 @@ type CorrelatorConfig struct {
 	Enabled          bool   `yaml:"enabled"`
 	Window           string `yaml:"window"`
 	DependenciesFile string `yaml:"dependencies_file"`
+}
+
+type DiagnosisConfig struct {
+	Enabled     bool    `yaml:"enabled"`
+	Endpoint    string  `yaml:"endpoint"`
+	Model       string  `yaml:"model"`
+	MaxTokens   int     `yaml:"max_tokens"`
+	Temperature float64 `yaml:"temperature"`
+	Timeout     string  `yaml:"timeout"`
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -277,7 +288,32 @@ func run() error {
 		incidents = correlator.WrapAlerts(ctx, anomalous)
 	}
 
-	for inc := range incidents {
+	// Stage 6: Diagnoser (or pass-through).
+	var diagnosed <-chan notify.Incident
+	if cfg.Diagnosis.Enabled {
+		apiKey := os.Getenv("LLM_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("LLM_API_KEY must be set when diagnosis is enabled")
+		}
+		diagCfg := diagnosis.DiagnoserConfig{
+			Endpoint:    cfg.Diagnosis.Endpoint,
+			Model:       cfg.Diagnosis.Model,
+			MaxTokens:   cfg.Diagnosis.MaxTokens,
+			Temperature: cfg.Diagnosis.Temperature,
+			Timeout:     parseDuration(cfg.Diagnosis.Timeout, 30*time.Second),
+		}
+		client := diagnosis.NewHTTPClient(diagCfg, apiKey)
+		diagnoser := diagnosis.NewDiagnoser(diagCfg, client)
+		diagnosed = diagnoser.Run(ctx, incidents)
+		slog.Info("diagnoser enabled",
+			"model", diagCfg.Model,
+			"endpoint", diagCfg.Endpoint,
+		)
+	} else {
+		diagnosed = incidents
+	}
+
+	for inc := range diagnosed {
 		if err := dispatcher.Dispatch(ctx, inc); err != nil {
 			slog.Error("dispatch failed", "err", err)
 		}

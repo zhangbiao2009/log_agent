@@ -443,3 +443,185 @@ func TestSlackNotifier_IncidentDepChainInHeader(t *testing.T) {
 		t.Errorf("expected dep chain in header, got: %s", headerText)
 	}
 }
+
+// --- Diagnosis rendering tests (Phase 5) ---
+
+func TestSlackNotifier_IncidentWithDiagnosisBlocks(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "diag-slack",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+		},
+		Severity:    "P1",
+		Diagnosis:   "root cause explanation",
+		Suggestions: []string{"action 1", "action 2"},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	// Header + diagnosis + suggestions + alert section = at least 4 blocks.
+	if len(blocks) < 4 {
+		t.Fatalf("expected at least 4 blocks, got %d", len(blocks))
+	}
+	// Check header contains severity.
+	headerText := blocks[0].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	if !contains(headerText, "P1") {
+		t.Errorf("expected P1 in header, got: %s", headerText)
+	}
+	// Check diagnosis block exists.
+	foundDiag := false
+	foundSug := false
+	for _, b := range blocks[1:] {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, "root cause explanation") {
+			foundDiag = true
+		}
+		if contains(text, "action 1") {
+			foundSug = true
+		}
+	}
+	if !foundDiag {
+		t.Error("expected diagnosis block with 'root cause explanation'")
+	}
+	if !foundSug {
+		t.Error("expected suggestions block with 'action 1'")
+	}
+}
+
+func TestSlackNotifier_IncidentDiagnosisEmptyBackwardCompat(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "no-diag",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+		},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	for _, b := range blocks {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, "Diagnosis") || contains(text, "Suggested actions") {
+			t.Errorf("empty diagnosis should not have diagnosis/suggestion blocks, got: %s", text)
+		}
+	}
+}
+
+func TestSlackNotifier_IncidentSuggestionsAsNumberedList(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	inc := Incident{
+		ID:          "sug-test",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
+		},
+		Severity:    "P2",
+		Diagnosis:   "something wrong",
+		Suggestions: []string{"first thing", "second thing", "third thing"},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	foundNumbered := false
+	for _, b := range blocks {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, "1.") && contains(text, "2.") && contains(text, "3.") {
+			foundNumbered = true
+		}
+	}
+	if !foundNumbered {
+		t.Error("expected numbered suggestions (1., 2., 3.)")
+	}
+}
+
+func TestSlackNotifier_SingleAlertWithDiagnosis(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := Incident{
+		Alerts:      []Alert{alert},
+		Services:    []string{"svc-X"},
+		Diagnosis:   "service X is down",
+		Severity:    "P3",
+		Suggestions: []string{"restart service X"},
+	}
+	if err := sn.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	// Should NOT have INCIDENT header (single alert).
+	headerText := blocks[0].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	if contains(headerText, "INCIDENT") {
+		t.Errorf("single-alert should not have INCIDENT header, got: %s", headerText)
+	}
+	// Should have diagnosis block.
+	foundDiag := false
+	for _, b := range blocks {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, "service X is down") {
+			foundDiag = true
+		}
+	}
+	if !foundDiag {
+		t.Error("expected diagnosis block in single-alert with diagnosis")
+	}
+}

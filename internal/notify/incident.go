@@ -20,6 +20,11 @@ type Incident struct {
 	Alerts      []Alert       // all correlated alerts in this incident
 	OpenedAt    time.Time     // timestamp of earliest alert
 	Window      time.Duration // correlation window used
+
+	// Set by Diagnoser (Phase 5). Zero values when diagnoser is disabled.
+	Diagnosis   string   // LLM-generated root-cause explanation
+	Severity    string   // P1, P2, P3 (assigned by LLM or heuristic)
+	Suggestions []string // actionable fix steps
 }
 
 // IsSingleAlert returns true for uncorrelated single-alert incidents

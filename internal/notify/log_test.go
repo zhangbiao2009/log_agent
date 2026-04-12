@@ -254,3 +254,128 @@ func TestLogNotifier_IncidentWithDepChain(t *testing.T) {
 		t.Errorf("expected dep chain services in output, got: %s", output)
 	}
 }
+
+// --- Diagnosis rendering tests (Phase 5) ---
+
+func TestLogNotifier_IncidentWithDiagnosis(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "diag-test",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		},
+		Severity:    "P1",
+		Diagnosis:   "root cause text",
+		Suggestions: []string{"action 1", "action 2"},
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !stringContains(output, "P1") {
+		t.Errorf("expected P1 severity in output, got: %s", output)
+	}
+	if !stringContains(output, "root cause text") {
+		t.Errorf("expected diagnosis text in output, got: %s", output)
+	}
+	if !stringContains(output, "action 1") || !stringContains(output, "action 2") {
+		t.Errorf("expected suggestions in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_IncidentDiagnosisEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "no-diag",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute},
+		},
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if stringContains(output, "DIAGNOSIS") {
+		t.Errorf("empty diagnosis should not show DIAGNOSIS section, got: %s", output)
+	}
+	if stringContains(output, "severity") {
+		t.Errorf("empty diagnosis should not show severity, got: %s", output)
+	}
+}
+
+func TestLogNotifier_IncidentSeverityOnly(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	inc := Incident{
+		ID:          "sev-only",
+		Services:    []string{"svc-A", "svc-B"},
+		RootService: "svc-B",
+		DepChain:    []string{"svc-B", "svc-A"},
+		Alerts: []Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute},
+		},
+		Severity: "P2",
+		// Diagnosis is empty — severity was set by heuristic but LLM failed.
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !stringContains(output, "P2") {
+		t.Errorf("expected P2 severity in incident header, got: %s", output)
+	}
+	if stringContains(output, "DIAGNOSIS") {
+		t.Errorf("empty diagnosis should not show DIAGNOSIS section, got: %s", output)
+	}
+}
+
+func TestLogNotifier_SingleAlertWithDiagnosis(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	alert := Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := Incident{
+		Alerts:      []Alert{alert},
+		Services:    []string{"svc-X"},
+		Diagnosis:   "service X is down",
+		Severity:    "P3",
+		Suggestions: []string{"restart service X"},
+	}
+	if err := ln.Send(context.Background(), inc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if stringContains(output, "INCIDENT") {
+		t.Errorf("single-alert should not have INCIDENT header, got: %s", output)
+	}
+	if !stringContains(output, "ALERT") {
+		t.Errorf("expected ALERT in output, got: %s", output)
+	}
+	if !stringContains(output, "service X is down") {
+		t.Errorf("expected diagnosis in output, got: %s", output)
+	}
+	if !stringContains(output, "P3") {
+		t.Errorf("expected severity in output, got: %s", output)
+	}
+	if !stringContains(output, "restart service X") {
+		t.Errorf("expected suggestion in output, got: %s", output)
+	}
+}
