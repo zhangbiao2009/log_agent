@@ -56,16 +56,11 @@ is a distinct concern that will also be used by L3 (anomaly detection).
 
 // Pattern represents a templatized log pattern discovered by Drain.
 type Pattern struct {
-    ID        string   // hex-encoded hash of the template tokens
-    Template  string   // human-readable template, e.g. "connection timeout to <*>:<*>"
-    Tokens    []string // tokenized template, variable positions are "<*>"
-    TokenCount int     // number of tokens (used for tree indexing)
-}
-
-// Match records that a log line matched a specific pattern.
-type Match struct {
-    PatternID string // links back to Pattern.ID
-    Template  string // denormalized for convenience
+    ID         string    // hex-encoded hash of the template tokens
+    Template   string    // human-readable template, e.g. "connection timeout to <*>:<*>"
+    Tokens     []string  // tokenized template, variable positions are "<*>"
+    TokenCount int       // number of tokens (used for tree indexing)
+    LastMatched time.Time // last time this pattern was matched (for LRU eviction)
 }
 ```
 
@@ -81,12 +76,10 @@ with minor numeric differences).
 // Preprocess normalizes variable parts of a log line before tokenization.
 // Applied in order:
 //   1. Strip JSON structure — extract only the message value(s)
-//   2. IP addresses → <IP>
+//   2. IPv4 addresses → <IP>
 //   3. UUIDs → <UUID>
 //   4. Hex strings (≥8 chars) → <HEX>
 //   5. Numbers (integers and decimals) → <NUM>
-//   6. Quoted strings → <QUOTED>  (optional, configurable)
-//   7. File paths with IDs → normalize IDs
 func Preprocess(raw string) string
 ```
 
@@ -119,10 +112,11 @@ Fixed Depth Tree" (ICWS 2017).
 
 // DrainConfig controls Drain's behavior.
 type DrainConfig struct {
-    Depth              int     // fixed tree depth (default: 4)
+    Depth               int     // fixed tree depth (default: 4)
     SimilarityThreshold float64 // merge threshold (default: 0.5)
-    MaxChildren        int     // max children per tree node (default: 100)
-    MaxPatterns        int     // max total patterns to track (default: 10000)
+    MaxChildren         int     // max children per tree node (default: 100)
+    MaxPatterns         int     // max total patterns to track (default: 10000)
+    ExtractJSONMessage  bool    // extract msg/err from JSON before Drain (default: true)
 }
 
 // Drain is an online log parser that discovers patterns.
@@ -189,8 +183,9 @@ type PatternEngine struct {
 
 func NewPatternEngine(cfg DrainConfig) *PatternEngine
 
-// Run consumes filtered log lines and emits them with PatternID set.
-// The output LogLine has the same fields as the input, plus PatternID.
+// Run consumes filtered log lines and emits them with PatternID
+// and PatternTemplate set.
+// The output LogLine has the same fields as the input, plus pattern fields.
 func (e *PatternEngine) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan ingest.LogLine
 ```
 
@@ -207,31 +202,36 @@ called sequentially. No mutex needed.
 // source.go (modified)
 
 type LogLine struct {
-    Service   string
-    Timestamp time.Time
-    Level     string
-    Raw       string
-    PatternID string // set by PatternEngine (empty if pattern detection disabled)
+    Service         string
+    Timestamp       time.Time
+    Level           string
+    Raw             string
+    PatternID       string // set by PatternEngine (empty if pattern detection disabled)
+    PatternTemplate string // human-readable template (set alongside PatternID)
 }
 ```
 
-Adding a field to a struct is backwards-compatible. Phase 1 code that
-doesn't set `PatternID` still works — it's just empty.
+Adding fields to a struct is backwards-compatible. Phase 1 code that
+doesn't set `PatternID` / `PatternTemplate` still works — they're just empty.
+The Aggregator uses `PatternTemplate` to populate `PatternSummary.Template`
+at flush time.
 
 ### 3.2 Alert — add Patterns
 
-Replace `SampleLines []string` with structured pattern data:
+Add `Patterns` field to `Alert`. Keep `SampleLines` for backwards
+compatibility when PatternEngine is disabled.
 
 ```go
 // notifier.go (modified)
 
 type Alert struct {
-    Service   string
-    Level     string        // highest severity across all patterns
-    Count     int           // total error lines (sum of all pattern counts)
-    Window    time.Duration
-    Timestamp time.Time
-    Patterns  []PatternSummary // per-pattern breakdown (sorted by count desc)
+    Service     string
+    Level       string        // highest severity across all patterns
+    Count       int           // total error lines (sum of all pattern counts)
+    Window      time.Duration
+    Timestamp   time.Time
+    SampleLines []string         // up to 5 raw examples (used when Patterns is empty)
+    Patterns    []PatternSummary // per-pattern breakdown (sorted by count desc)
 }
 
 type PatternSummary struct {
@@ -242,9 +242,10 @@ type PatternSummary struct {
 }
 ```
 
-**Backwards compatibility:** `SampleLines` is removed from `Alert`. This
-is an internal struct — only our own Notifiers consume it. We update
-SlackNotifier and LogNotifier in the same PR.
+**Which field do Notifiers use?**
+- If `Patterns` is non-empty → render per-pattern breakdown.
+- If `Patterns` is empty (PatternEngine disabled) → fall back to
+  `Alert.SampleLines` (Phase 1 behavior).
 
 ### 3.3 Aggregator — group by (service, patternID)
 
@@ -262,8 +263,51 @@ func bucketKey(line ingest.LogLine) string {
 }
 ```
 
-On flush, aggregate per-service: collect all pattern buckets for the same
-service into a single Alert with `Patterns` sorted by count descending.
+**Flush algorithm (changed from Phase 1):**
+
+On flush, re-aggregate per service — collect all pattern buckets for the
+same service into a single Alert with `Patterns` sorted by count desc.
+
+```
+flush(buckets):
+  serviceMap = map[service] → { level, count, patterns[], samples[] }
+
+  for key, bucket in buckets:
+    service, patternID = splitBucketKey(key)  // split on "|"
+    sa = serviceMap[service]
+    sa.count += bucket.count
+    sa.level  = max(sa.level, bucket.level)
+
+    if patternID != "":
+      sa.patterns = append(sa.patterns, PatternSummary{
+        Template:    bucket.template,    // captured from first LogLine
+        Count:       bucket.count,
+        Level:       bucket.level,
+        SampleLines: bucket.samples[:3],
+      })
+    else:
+      sa.samples = bucket.samples        // Phase 1 fallback
+
+  for service, sa in serviceMap:
+    sort sa.patterns by count descending
+    emit Alert{
+      Service:     service,
+      Level:       sa.level,
+      Count:       sa.count,
+      SampleLines: sa.samples,           // empty when patterns are used
+      Patterns:    sa.patterns,
+    }
+```
+
+The `bucket` struct gains a `template` field, set from `LogLine.PatternTemplate`
+when the first line of a new pattern arrives.
+
+**Edge case — PatternID changes mid-window due to merge:** If Drain merges
+two templates while the aggregation window is open, lines stamped with
+the old PatternID are already in a bucket under that ID. New lines get the
+new ID. This results in the flushed Alert having two PatternSummary entries
+for what is logically the same pattern. This is acceptable — at most a
+one-window miscount, and it self-corrects in the next window.
 
 ---
 
@@ -377,6 +421,11 @@ is reached.
 **Rationale:** In a long-running agent, some patterns appear during
 deploys or transient incidents and never recur. Without eviction, memory
 grows without bound. LRU ensures the working set stays relevant.
+
+**Implementation:** Each `Pattern` carries a `LastMatched time.Time` field,
+updated on every match. When `maxPatterns` is exceeded, scan all patterns
+and evict the one with the oldest `LastMatched`. This is O(n) but
+n ≤ 10,000 and eviction is rare — simpler than a linked-list LRU.
 
 **Alternative considered:** Time-based eviction (patterns not seen in 24h).
 Rejected because it requires another clock dependency and timer goroutine.

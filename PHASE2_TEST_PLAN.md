@@ -21,14 +21,16 @@ aggregation pipeline.
 | 6 | `not json at all` | `not json at all` | Non-JSON passes through unchanged |
 | 7 | `{malformed` | `{malformed` | Invalid JSON passes through unchanged |
 
-### TC-P02: IP address normalization
+### TC-P02: IPv4 address normalization
 
 | # | Input | Expected Output |
 |---|---|---|
 | 1 | `connection to 10.0.0.1 failed` | `connection to <IP> failed` |
 | 2 | `dial tcp 192.168.1.100:5432` | `dial tcp <IP>:<NUM>` |
-| 3 | `host 2001:db8::1 unreachable` | `host <IP> unreachable` |
-| 4 | `no ip here` | `no ip here` |
+| 3 | `no ip here` | `no ip here` |
+
+> **Note:** IPv6 normalization is deferred — the regex is error-prone and
+> IPv4 covers the majority of real-world logs.
 
 ### TC-P03: UUID normalization
 
@@ -104,17 +106,14 @@ Drain catalog.
 
 **Expected:** Two distinct patterns (different IDs).
 
-### TC-D05: Multiple variable positions
+### TC-D05: Preprocessed wildcards treated as matching tokens
 
-**Setup:** Process sequence:
-1. `"failed to connect to 10.0.0.1 port 5432 timeout 3000ms"`
-2. `"failed to connect to 10.0.0.2 port 3306 timeout 5000ms"`
-
-(After preprocessing these become:)
+**Setup:** Process two already-preprocessed lines:
 1. `"failed to connect to <IP> port <NUM> timeout <NUM>ms"`
-2. Same after preprocessing.
+2. `"failed to connect to <IP> port <NUM> timeout <NUM>ms"`
 
-**Expected:** Same pattern since preprocessing already collapsed the variables.
+**Expected:** Same pattern (identical tokens). Drain treats `<IP>`, `<NUM>`,
+etc. as regular tokens for matching — they're constant after preprocessing.
 
 ### TC-D06: Token count branching
 
@@ -262,6 +261,13 @@ full JSON string.
 **Expected:** `Raw` field in the output line is still the original JSON
 string (not the preprocessed version).
 
+### TC-E08: JSON extraction disabled
+
+**Setup:** Create PatternEngine with `ExtractJSONMessage: false`. Send a
+JSON log line.
+**Expected:** PatternID is based on the full raw JSON string, not just
+extracted message fields. Pattern template includes JSON structure tokens.
+
 ---
 
 ## 4. Modified Tests — `internal/notify/aggregator_test.go`
@@ -281,9 +287,8 @@ Sorted by count descending.
 
 **Setup:** Send 5 lines with `PatternID=""` (Phase 1 mode).
 
-**Expected:** Alert has `Count=5` and `Patterns` is either empty or
-contains one entry with an empty template. SampleLines (if kept for
-backwards compat) are populated.
+**Expected:** Alert has `Count=5`, `Patterns` is empty (nil or len 0),
+and `SampleLines` contains up to 5 raw examples (Phase 1 behavior).
 
 ### TC-A-P03: Multiple services with patterns
 
@@ -418,9 +423,9 @@ breakdown (same as Phase 1).
 
 | Package | File | Test Count |
 |---|---|---|
-| `pattern` | `preprocess_test.go` | 18 |
+| `pattern` | `preprocess_test.go` | 17 |
 | `pattern` | `drain_test.go` | 17 |
-| `pattern` | `engine_test.go` | 7 |
+| `pattern` | `engine_test.go` | 8 |
 | `notify` | `aggregator_test.go` | +6 (modified) |
 | `notify` | `log_test.go` | +2 (modified) |
 | `notify` | `slack_test.go` | +2 (modified) |
