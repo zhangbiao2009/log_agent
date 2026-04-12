@@ -32,14 +32,14 @@ and an integration smoke test with a mock LLM.
 internal/diagnosis/
     prompt_test.go     — prompt assembly tests (9 cases)
     parse_test.go      — response parsing tests (10 cases)
-    diagnoser_test.go  — pipeline stage tests (10 cases)
-    llm_test.go        — HTTPClient tests with httptest (8 cases)
+    diagnoser_test.go  — pipeline stage tests (11 cases)
+    llm_test.go        — HTTPClient tests with httptest (9 cases)
 internal/notify/
-    log_test.go        — (append) diagnosis rendering tests (3 cases)
-    slack_test.go      — (append) diagnosis rendering tests (3 cases)
+    log_test.go        — (append) diagnosis rendering tests (4 cases)
+    slack_test.go      — (append) diagnosis rendering tests (4 cases)
 ```
 
-**Total: 43 test cases.**
+**Total: 47 test cases.**
 
 ---
 
@@ -189,10 +189,14 @@ internal/notify/
 
 ---
 
-## 5. `diagnoser_test.go` — Pipeline Stage (10 cases)
+## 5. `diagnoser_test.go` — Pipeline Stage (11 cases)
 
 All diagnoser tests use:
 - `MockLLM{Response: "...", Err: nil}` — returns canned response.
+  Also records `CapturedPrompt` (last prompt received) and
+  `CallCount` (total calls). Has an optional `Block` channel —
+  when non-nil, `Complete` blocks until it’s closed or ctx is
+  cancelled (used for shutdown tests).
 - `makeIncident(services...)` helper — constructs a minimal Incident
   with the given services, one alert per service.
 - `collectIncidents(out, n, timeout)` — same pattern as correlator tests.
@@ -206,9 +210,9 @@ All diagnoser tests use:
 
 **`TestDiagnoser_ClosesOutputOnContextCancel`**
 - Send one incident, cancel ctx before LLM responds.
-- MockLLM blocks until ctx is cancelled (use a channel-gated mock).
+- MockLLM uses `Block` channel so `Complete` blocks until ctx cancels.
 - Expected: output closes within 1s.
-- Rationale: graceful shutdown; LLM call is cancelled.
+- Rationale: graceful shutdown; LLM call is cancelled via ctx.
 
 **`TestDiagnoser_PassesThroughAllIncidents`**
 - Send 3 incidents, MockLLM returns canned response for each.
@@ -232,7 +236,7 @@ All diagnoser tests use:
 - Expected: output incident has `len(Suggestions) == 3`.
 - Rationale: suggestions are extracted and set.
 
-### 5.3 Failure / Fallback (4 cases)
+### 5.3 Failure / Fallback (5 cases)
 
 **`TestDiagnoser_LLMErrorFallbackDiagnosis`**
 - MockLLM returns `Err: errors.New("connection refused")`.
@@ -252,6 +256,11 @@ All diagnoser tests use:
 - Expected: `Severity == "P1"` (heuristic: ≥3 services → P1).
 - Rationale: heuristic fallback produces reasonable severity.
 
+**`TestDiagnoser_HeuristicSeverityP2`**
+- MockLLM returns error. Incident has 2 services, no FATAL-level alert.
+- Expected: `Severity == "P2"` (heuristic: 2 services → P2).
+- Rationale: two-service incident → middle severity.
+
 **`TestDiagnoser_HeuristicSeverityP3`**
 - MockLLM returns error. Incident has 1 service, no FATAL.
 - Expected: `Severity == "P3"`.
@@ -259,7 +268,7 @@ All diagnoser tests use:
 
 ---
 
-## 6. `llm_test.go` — HTTPClient (8 cases)
+## 6. `llm_test.go` — HTTPClient (9 cases)
 
 All tests use `httptest.NewServer` to simulate the LLM API. No real
 network calls.
@@ -301,7 +310,9 @@ network calls.
 ### 6.3 Error Handling (3 cases)
 
 **`TestHTTPClient_RateLimitRetry`**
-- Server returns 429 on first call with `Retry-After: 1`, then 200.
+- Server returns 429 on first call with `Retry-After: 0`, then 200.
+  (Use `Retry-After: 0` to avoid real sleeps in tests; the retry
+  logic is the same regardless of delay value.)
 - Expected: `Complete` succeeds (retried once), returns the response.
   Verify server received exactly 2 requests.
 - Rationale: rate limit retry works.
@@ -317,18 +328,29 @@ network calls.
   exactly 1 request (no retry on 4xx).
 - Rationale: bad request is not retried.
 
+### 6.4 Context / Timeout (1 case)
+
+**`TestHTTPClient_RespectsContextCancel`**
+- Start httptest server that blocks (never responds).
+- Create a context with a short timeout (50ms).
+- Call `Complete(ctx, "prompt")`.
+- Expected: returns `context.DeadlineExceeded` (or wrapped). Server
+  received the request but client did not wait for the response.
+- Rationale: context propagation via `http.NewRequestWithContext`
+  is critical for graceful shutdown of the pipeline.
+
 ---
 
-## 7. Notify Tests — Diagnosis Rendering (6 cases)
+## 7. Notify Tests — Diagnosis Rendering (8 cases)
 
-### 7.1 `log_test.go` — Append 3 Cases
+### 7.1 `log_test.go` — Append 4 Cases
 
 **`TestLogNotifier_IncidentWithDiagnosis`**
 - Incident with `Severity="P1"`, `Diagnosis="root cause text"`,
-  `Suggestions=["action 1", "action 2"]`.
+  `Suggestions=["action 1", "action 2"]`, multiple alerts.
 - Expected: output contains "P1", "root cause text", "action 1",
   "action 2". All in readable format.
-- Rationale: full diagnosis rendering.
+- Rationale: full diagnosis rendering for multi-service incident.
 
 **`TestLogNotifier_IncidentDiagnosisEmpty`**
 - Incident with `Diagnosis=""` (diagnoser disabled).
@@ -343,7 +365,16 @@ network calls.
 - Rationale: partial enrichment (severity without diagnosis) renders
   cleanly.
 
-### 7.2 `slack_test.go` — Append 3 Cases
+**`TestLogNotifier_SingleAlertWithDiagnosis`**
+- Single-alert incident (`IsSingleAlert() == true`) with
+  `Diagnosis="service X is down"`, `Severity="P3"`,
+  `Suggestions=["restart service X"]`.
+- Expected: alert renders in Phase 3 format, followed by a diagnosis
+  section containing severity, diagnosis text, and suggestions.
+- Rationale: even single-alert incidents display diagnosis when
+  enriched by the diagnoser (see Design Doc §9.3).
+
+### 7.2 `slack_test.go` — Append 4 Cases
 
 **`TestSlackNotifier_IncidentWithDiagnosisBlocks`**
 - Incident with severity, diagnosis, and suggestions.
@@ -363,6 +394,15 @@ network calls.
 - Expected: suggestions block text contains "1.", "2.", "3." prefixed
   items.
 - Rationale: suggestions are numbered in Slack for readability.
+
+**`TestSlackNotifier_SingleAlertWithDiagnosis`**
+- Single-alert incident (`IsSingleAlert() == true`) with
+  `Diagnosis` and `Suggestions` set.
+- Expected: alert renders in Phase 3 Slack format, plus an additional
+  block for diagnosis/suggestions. No incident header block (since
+  it’s a single alert), but diagnosis section is present.
+- Rationale: single-alert incidents enriched by diagnoser show
+  diagnosis in Slack (see Design Doc §9.3).
 
 ---
 
@@ -400,9 +440,9 @@ Assertions:
 - `Suggestions[0]` contains "Rollback".
 - All original fields preserved: `Services`, `RootService`, `DepChain`,
   `Alerts`, `ID`, `OpenedAt`, `Window` unchanged.
-- MockLLM received exactly 1 call.
-- The prompt passed to MockLLM contains all 3 service names and the
-  dependency chain.
+- `mock.CallCount == 1` — LLM called exactly once.
+- `mock.CapturedPrompt` contains all 3 service names and the
+  dependency chain "bank-gw → payment-svc → order-svc".
 
 ---
 

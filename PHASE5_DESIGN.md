@@ -97,7 +97,8 @@ type LLMClient interface {
 
 ```go
 type DiagnoserConfig struct {
-    Model       string        // model name for the LLM client (e.g. "deepseek/deepseek-chat")
+    Endpoint    string        // LLM API endpoint (e.g. "https://api.deepseek.com/v1/chat/completions")
+    Model       string        // model name (e.g. "deepseek-chat")
     MaxTokens   int           // max response tokens (default: 1024)
     Temperature float64       // 0.0 for deterministic diagnosis
     Timeout     time.Duration // per-call timeout (default: 30s)
@@ -171,14 +172,15 @@ SUGGESTIONS:
 
 | Component | Estimated tokens |
 |---|---|
-| System instructions | ~150 |
+| System instructions + format spec | ~200 |
 | Per-service section (3 services × 3 patterns × 5 samples) | ~600 |
-| Response headroom | ~300 |
-| **Total** | **~1050** |
+| **Total prompt** | **~800** |
+| Response (`max_tokens` ceiling) | 1024 |
 
-For a typical 3-service incident, the full prompt fits well within
-context limits. For larger incidents (10+ services), truncate to the
-5 services with the highest anomaly scores.
+For a typical 3-service incident, the prompt fits within context limits
+with ample room. For larger incidents (10+ services), truncate to the
+5 services with the highest max-ZScore, and append a note
+"(N additional services omitted)" so the LLM knows context was trimmed.
 
 ---
 
@@ -211,13 +213,17 @@ No panics, no retries on parse failure. Log a warning and continue.
 
 ```go
 type HTTPClient struct {
-    endpoint string        // e.g. "https://api.deepseek.com/v1/chat/completions"
-    apiKey   string        // from environment variable
-    model    string        // "deepseek-chat"
-    config   DiagnoserConfig
-    client   *http.Client
+    config DiagnoserConfig // Endpoint, Model, MaxTokens, Temperature, Timeout
+    apiKey string          // from environment variable; never logged
+    client *http.Client
 }
+
+func NewHTTPClient(cfg DiagnoserConfig, apiKey string) *HTTPClient
 ```
+
+The endpoint, model, and generation parameters all come from
+`DiagnoserConfig`. The only additional input is the API key (from an
+environment variable, never from config files).
 
 **OpenAI-compatible API:** DeepSeek, OpenAI, and most providers expose
 the same `/v1/chat/completions` endpoint. The client sends a standard
@@ -286,16 +292,27 @@ When the LLM is unavailable, assign severity from alert data:
 
 | Condition | Severity |
 |---|---|
-| ≥3 services affected OR any FATAL-level alert | P1 |
-| 2 services affected OR ≥5 spike patterns | P2 |
+| ≥3 services affected OR any alert with Level=="FATAL" | P1 |
+| 2 services affected OR total spike patterns across all alerts ≥5 | P2 |
 | Otherwise | P3 |
+
+Severity conditions are evaluated top-to-bottom; the first match wins.
+"Spike patterns" = count of `PatternSummary` entries with
+`Anomaly == AnomalySpike` summed across all `Alerts` in the incident.
 
 ### 8.3 Single-Alert Incidents
 
 For incidents where `IsSingleAlert()` is true (from `WrapAlerts` bypass
-or single-service correlation), still call the LLM — a single-service
+or unknown-service isolation), still call the LLM — a single-service
 anomaly may still benefit from diagnosis. The prompt adapts by omitting
-the dependency chain section.
+the dependency chain and root cause sections.
+
+**Cost guard:** When the correlator is disabled (all incidents come from
+`WrapAlerts`), every anomaly triggers an LLM call. This is acceptable at
+the expected volume (5-20 anomalies/day), but if volume is higher, the
+diagnoser should be disabled via config rather than adding internal
+throttling. The design deliberately keeps complexity out of the agent —
+configuration controls which stages are active.
 
 ---
 
@@ -335,7 +352,21 @@ Root cause: bank-gw
 [service-level alert blocks follow]
 ```
 
-### 9.3 Backward Compatibility
+### 9.3 Single-Alert Incidents With Diagnosis
+
+When a single-alert incident (`IsSingleAlert() == true`) has been
+enriched by the diagnoser, `Diagnosis != ""` but `IsSingleAlert()`
+is still true. Notifiers must handle this:
+
+1. Render the alert in Phase 3 format (existing `sendAlert` path).
+2. If `Diagnosis != ""`, **append** a diagnosis section below the alert.
+
+This is additive — no change to `IsSingleAlert()` semantics. The
+diagnosis section rendering is the same as for multi-service incidents;
+it's just positioned after the single alert instead of between the
+incident header and the alert list.
+
+### 9.4 Backward Compatibility
 
 When `Diagnosis == ""` (diagnoser disabled), notifiers render exactly
 as in Phase 4. No change to existing output formatting.
@@ -363,9 +394,14 @@ diagnosis:
 // After correlator, before dispatcher:
 var diagnosed <-chan notify.Incident
 if cfg.Diagnosis.Enabled {
-    client := diagnosis.NewHTTPClient(cfg.Diagnosis.Endpoint, os.Getenv("LLM_API_KEY"), cfg.Diagnosis.Model, ...)
-    diagnoser := diagnosis.NewDiagnoser(cfg.Diagnosis, client)
+    apiKey := os.Getenv("LLM_API_KEY")
+    if apiKey == "" {
+        return fmt.Errorf("LLM_API_KEY must be set when diagnosis is enabled")
+    }
+    client := diagnosis.NewHTTPClient(diagCfg, apiKey)
+    diagnoser := diagnosis.NewDiagnoser(diagCfg, client)
     diagnosed = diagnoser.Run(ctx, incidents)
+    slog.Info("diagnoser enabled", "model", diagCfg.Model, "endpoint", diagCfg.Endpoint)
 } else {
     diagnosed = incidents
 }
@@ -383,11 +419,23 @@ The LLM client is behind an interface, so all tests use a mock:
 
 ```go
 type MockLLM struct {
-    Response string
-    Err      error
+    Response       string        // canned response to return
+    Err            error         // error to return (nil for success)
+    CapturedPrompt string        // last prompt received (for assertion)
+    CallCount      int           // number of Complete calls
+    Block          chan struct{} // if non-nil, Complete blocks until closed (for cancel tests)
 }
 
 func (m *MockLLM) Complete(ctx context.Context, prompt string) (string, error) {
+    m.CallCount++
+    m.CapturedPrompt = prompt
+    if m.Block != nil {
+        select {
+        case <-m.Block:
+        case <-ctx.Done():
+            return "", ctx.Err()
+        }
+    }
     return m.Response, m.Err
 }
 ```
