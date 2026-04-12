@@ -72,7 +72,7 @@ func TestParseLokiResponse_Basic(t *testing.T) {
 		{"myapp", ts, `{"level":"error","msg":"bad"}`},
 		{"myapp", ts + 1, `another line`},
 	})
-	lines, maxTS, err := parseLokiResponse(strings.NewReader(body))
+	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestParseLokiResponse_ServiceFallback(t *testing.T) {
 		{"stream":{"job":"batch"},"values":[["3000","line3"]]},
 		{"stream":{"namespace":"prod"},"values":[["4000","line4"]]}
 	]}}`
-	lines, _, err := parseLokiResponse(strings.NewReader(resp))
+	lines, _, err := parseLokiResponse(strings.NewReader(resp), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParseLokiResponse_ServiceFallback(t *testing.T) {
 
 func TestParseLokiResponse_Empty(t *testing.T) {
 	body := `{"status":"success","data":{"resultType":"streams","result":[]}}`
-	lines, maxTS, err := parseLokiResponse(strings.NewReader(body))
+	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,6 +118,35 @@ func TestParseLokiResponse_Empty(t *testing.T) {
 	}
 	if !maxTS.IsZero() {
 		t.Errorf("expected zero maxTS, got %v", maxTS)
+	}
+}
+
+func TestParseLokiResponse_CustomServiceLabel(t *testing.T) {
+	resp := `{"status":"success","data":{"resultType":"streams","result":[
+		{"stream":{"containerId":"host/k3s.service","service_name":"promtail","job":"promtail"},"values":[["1000","line1"]]},
+		{"stream":{"service_name":"myapp","job":"batch"},"values":[["2000","line2"]]},
+		{"stream":{"job":"orphan"},"values":[["3000","line3"]]}
+	]}}`
+
+	// With custom service label "service_name"
+	lines, _, err := parseLokiResponse(strings.NewReader(resp), "service_name")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := []string{"promtail", "myapp", "unknown"}
+	for i, want := range expected {
+		if lines[i].Service != want {
+			t.Errorf("line %d: service = %q, want %q", i, lines[i].Service, want)
+		}
+	}
+
+	// With custom label "containerId"
+	lines2, _, err := parseLokiResponse(strings.NewReader(resp), "containerId")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lines2[0].Service != "host/k3s.service" {
+		t.Errorf("line 0: service = %q, want %q", lines2[0].Service, "host/k3s.service")
 	}
 }
 

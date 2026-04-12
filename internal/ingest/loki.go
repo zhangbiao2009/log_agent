@@ -13,9 +13,13 @@ import (
 )
 
 type LokiConfig struct {
-	URL          string        `yaml:"url"`
-	Query        string        `yaml:"query"`
-	PollInterval time.Duration `yaml:"poll_interval"`
+	URL               string        `yaml:"url"`
+	Query             string        `yaml:"query"`
+	PollInterval      time.Duration `yaml:"poll_interval"`
+	TenantID          string        `yaml:"tenant_id"`
+	ServiceLabel      string        `yaml:"service_label"`
+	BasicAuthUser     string        `yaml:"basic_auth_user"`
+	BasicAuthPassword string        `yaml:"basic_auth_password"`
 }
 
 type LokiSource struct {
@@ -81,6 +85,8 @@ func (s *LokiSource) doPoll(ctx context.Context, out chan<- LogLine, start *time
 	}
 	*consecutiveFailures = 0
 
+	slog.Info("loki poll complete", "lines", len(lines), "start", start.Format(time.RFC3339), "end", end.Format(time.RFC3339))
+
 	// Advance start immediately so the next fetch can overlap with sending.
 	if !maxTS.IsZero() {
 		*start = maxTS.Add(1 * time.Nanosecond)
@@ -129,6 +135,12 @@ func (s *LokiSource) fetchLogs(ctx context.Context, start, end time.Time) ([]Log
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("build request: %w", err)
 	}
+	if s.config.TenantID != "" {
+		req.Header.Set("X-Scope-OrgID", s.config.TenantID)
+	}
+	if s.config.BasicAuthUser != "" {
+		req.SetBasicAuth(s.config.BasicAuthUser, s.config.BasicAuthPassword)
+	}
 	q := req.URL.Query()
 	q.Set("query", s.config.Query)
 	q.Set("start", strconv.FormatInt(start.UnixNano(), 10))
@@ -146,10 +158,28 @@ func (s *LokiSource) fetchLogs(ctx context.Context, start, end time.Time) ([]Log
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, time.Time{}, fmt.Errorf("loki returned %d: %s", resp.StatusCode, string(body))
 	}
-	return parseLokiResponse(resp.Body)
+	return parseLokiResponse(resp.Body, s.config.ServiceLabel)
 }
 
-func parseLokiResponse(r io.Reader) ([]LogLine, time.Time, error) {
+// extractService picks the service name from stream labels.
+// If serviceLabel is set, it uses that key directly.
+// Otherwise it tries a fallback chain: service → app → container → job → unknown.
+func extractService(labels map[string]string, serviceLabel string) string {
+	if serviceLabel != "" {
+		if v := labels[serviceLabel]; v != "" {
+			return v
+		}
+		return "unknown"
+	}
+	for _, key := range []string{"service", "app", "container", "job"} {
+		if v := labels[key]; v != "" {
+			return v
+		}
+	}
+	return "unknown"
+}
+
+func parseLokiResponse(r io.Reader, serviceLabel string) ([]LogLine, time.Time, error) {
 	// PERF: This function is the single largest allocation site (~5k allocs
 	// per 1000-line response). Three improvements to consider:
 	//   1. Pre-allocate the lines slice: estimate capacity from Content-Length
@@ -166,18 +196,8 @@ func parseLokiResponse(r io.Reader) ([]LogLine, time.Time, error) {
 	var lines []LogLine
 	var maxTS time.Time
 	for _, stream := range resp.Data.Result {
-		service := stream.Stream["service"]
-		if service == "" {
-			for _, key := range []string{"app", "container", "job"} {
-				if v := stream.Stream[key]; v != "" {
-					service = v
-					break
-				}
-			}
-			if service == "" {
-				service = "unknown"
-			}
-		}
+		service := extractService(stream.Stream, serviceLabel)
+
 		for _, val := range stream.Values {
 			if len(val) < 2 {
 				continue

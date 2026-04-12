@@ -1,7 +1,11 @@
 loki:
-  url: "http://loki.internal:3100"
-  query: '{namespace="prod"}'
-  poll_interval: 10s
+  url: "http://localhost:3000/api/datasources/proxy/uid/loki-infra-logging-us-dev-5-001"
+  query: '{container="notifications-processor"}'
+  poll_interval: 30s
+  tenant_id: ""           # Not needed when going through Grafana proxy
+  service_label: "app"    # Extract service name from "app" label
+  basic_auth_user: "root"
+  basic_auth_password: "${GRAFANA_PASSWORD}"
 
 aggregation:
   window: 1m
@@ -9,6 +13,4 @@ aggregation:
 
 notification:
   channels:
-    - type: slack
-      webhook_url: "${SLACK_WEBHOOK_URL}"
     - type: log

@@ -22,9 +22,13 @@ type Config struct {
 }
 
 type LokiConfig struct {
-	URL          string `yaml:"url"`
-	Query        string `yaml:"query"`
-	PollInterval string `yaml:"poll_interval"`
+	URL               string `yaml:"url"`
+	Query             string `yaml:"query"`
+	PollInterval      string `yaml:"poll_interval"`
+	TenantID          string `yaml:"tenant_id"`
+	ServiceLabel      string `yaml:"service_label"`
+	BasicAuthUser     string `yaml:"basic_auth_user"`
+	BasicAuthPassword string `yaml:"basic_auth_password"`
 }
 
 type AggregationConfig struct {
@@ -111,9 +115,13 @@ func run() error {
 
 	// Build pipeline components.
 	source := ingest.NewLokiSource(ingest.LokiConfig{
-		URL:          cfg.Loki.URL,
-		Query:        cfg.Loki.Query,
-		PollInterval: pollInterval,
+		URL:               cfg.Loki.URL,
+		Query:             cfg.Loki.Query,
+		PollInterval:      pollInterval,
+		TenantID:          cfg.Loki.TenantID,
+		ServiceLabel:      cfg.Loki.ServiceLabel,
+		BasicAuthUser:     cfg.Loki.BasicAuthUser,
+		BasicAuthPassword: cfg.Loki.BasicAuthPassword,
 	})
 
 	notifiers := buildNotifiers(cfg.Notification)
