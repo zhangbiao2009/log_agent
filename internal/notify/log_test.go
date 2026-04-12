@@ -97,3 +97,77 @@ func stringContains(s, substr string) bool {
 	}
 	return false
 }
+
+// --- Anomaly rendering tests ---
+
+func TestLogNotifier_PatternWithSpikeAnomaly(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   200,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
+		},
+	}
+	if err := ln.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !stringContains(output, "SPIKE") {
+		t.Errorf("expected SPIKE in output, got: %s", output)
+	}
+	if !stringContains(output, "4.2") {
+		t.Errorf("expected z=4.2 in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_PatternWithNewPattern(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   1,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "new error <*>", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
+		},
+	}
+	if err := ln.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !stringContains(output, "NEW") {
+		t.Errorf("expected NEW in output, got: %s", output)
+	}
+}
+
+func TestLogNotifier_PatternWithNoAnomaly(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ln := NewLogNotifier(logger)
+
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   5,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
+		},
+	}
+	if err := ln.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if stringContains(output, "SPIKE") || stringContains(output, "NEW") || stringContains(output, "RATE-JUMP") {
+		t.Errorf("expected no anomaly tag in output, got: %s", output)
+	}
+}

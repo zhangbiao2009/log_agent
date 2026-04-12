@@ -217,3 +217,121 @@ func TestSlackNotifier_FallsBackToSamples(t *testing.T) {
 		t.Errorf("expected 'Samples' heading in fallback block, got: %s", text)
 	}
 }
+
+// --- Anomaly rendering tests ---
+
+func TestSlackNotifier_SpikePatternHasEmoji(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   200,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
+		},
+	}
+	if err := sn.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	found := false
+	for _, b := range blocks[1:] {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, ":chart_with_upward_trend:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected spike emoji in slack blocks")
+	}
+}
+
+func TestSlackNotifier_NewPatternHasEmoji(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   1,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "new error", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
+		},
+	}
+	if err := sn.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	found := false
+	for _, b := range blocks[1:] {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, ":new:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected new-pattern emoji in slack blocks")
+	}
+}
+
+func TestSlackNotifier_NoAnomalyPatternHasNoEmoji(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{
+		Service: "svc",
+		Level:   "ERROR",
+		Count:   5,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
+		},
+	}
+	if err := sn.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := msg["blocks"].([]interface{})
+	for _, b := range blocks[1:] {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, ":chart_with_upward_trend:") || contains(text, ":new:") || contains(text, ":zap:") {
+			t.Errorf("unexpected anomaly emoji in steady-state block: %s", text)
+		}
+	}
+}
