@@ -1,0 +1,49 @@
+# Phase 5 diagnosis demo config.
+# Usage:
+#   1. Start mock LLM:  go run testdata/mock_llm_server.go
+#   2. Run agent:        LLM_API_KEY=test go run ./cmd/agent/ config/config-diagnosis.yaml
+#
+# Uses the same correlator demo logs (bank-gateway cascading failure).
+# Diagnoser enriches the incident with LLM-generated root cause and suggestions.
+
+source:
+  type: file
+  file:
+    path: testdata/correlator_demo.ndjson
+
+aggregation:
+  window: 5s
+  min_count: 1
+
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
+anomaly:
+  enabled: true
+  spike_multiplier: 3.0
+  rate_jump_factor: 5.0
+  ema_alpha: 0.3
+  min_samples: 3
+  new_pattern_grace: 24h
+
+correlator:
+  enabled: true
+  window: 5s
+  dependencies_file: config/dependencies.yaml
+
+diagnosis:
+  enabled: true
+  endpoint: http://localhost:9999/v1/chat/completions
+  model: mock-diagnosis
+  max_tokens: 1024
+  temperature: 0
+  timeout: 10s
+
+notification:
+  channels:
+    - type: log
