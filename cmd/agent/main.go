@@ -18,9 +18,21 @@ import (
 // Config is the top-level configuration.
 type Config struct {
 	Loki         LokiConfig         `yaml:"loki"`
+	Source       SourceConfig       `yaml:"source"`
 	Aggregation  AggregationConfig  `yaml:"aggregation"`
 	Notification NotificationConfig `yaml:"notification"`
 	Pattern      PatternConfig      `yaml:"pattern"`
+}
+
+// SourceConfig selects which log source to use.
+// type: "loki" (default) or "file" (for local testing without Loki).
+type SourceConfig struct {
+	Type string     `yaml:"type"` // "loki" | "file"
+	File FileSource `yaml:"file"`
+}
+
+type FileSource struct {
+	Path string `yaml:"path"`
 }
 
 type LokiConfig struct {
@@ -106,6 +118,34 @@ func buildNotifiers(cfg NotificationConfig) []notify.Notifier {
 	return notifiers
 }
 
+func buildSource(cfg *Config) (ingest.LogSource, error) {
+	sourceType := cfg.Source.Type
+	if sourceType == "" {
+		sourceType = "loki" // default for backward compatibility
+	}
+	switch sourceType {
+	case "loki":
+		return ingest.NewLokiSource(ingest.LokiConfig{
+			URL:               cfg.Loki.URL,
+			Query:             cfg.Loki.Query,
+			PollInterval:      parseDuration(cfg.Loki.PollInterval, 10*time.Second),
+			TenantID:          cfg.Loki.TenantID,
+			ServiceLabel:      cfg.Loki.ServiceLabel,
+			BasicAuthUser:     cfg.Loki.BasicAuthUser,
+			BasicAuthPassword: cfg.Loki.BasicAuthPassword,
+		}), nil
+	case "file":
+		path := cfg.Source.File.Path
+		if path == "" {
+			return nil, fmt.Errorf("source.file.path must be set when source.type is \"file\"")
+		}
+		slog.Info("using file source", "path", path)
+		return ingest.NewFileSource(ingest.FileConfig{Path: path}), nil
+	default:
+		return nil, fmt.Errorf("unknown source type %q (must be \"loki\" or \"file\")", sourceType)
+	}
+}
+
 func run() error {
 	configPath := "config/config.yaml"
 	if len(os.Args) > 1 {
@@ -117,7 +157,6 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	pollInterval := parseDuration(cfg.Loki.PollInterval, 10*time.Second)
 	window := parseDuration(cfg.Aggregation.Window, 1*time.Minute)
 	minCount := cfg.Aggregation.MinCount
 	if minCount == 0 {
@@ -125,15 +164,10 @@ func run() error {
 	}
 
 	// Build pipeline components.
-	source := ingest.NewLokiSource(ingest.LokiConfig{
-		URL:               cfg.Loki.URL,
-		Query:             cfg.Loki.Query,
-		PollInterval:      pollInterval,
-		TenantID:          cfg.Loki.TenantID,
-		ServiceLabel:      cfg.Loki.ServiceLabel,
-		BasicAuthUser:     cfg.Loki.BasicAuthUser,
-		BasicAuthPassword: cfg.Loki.BasicAuthPassword,
-	})
+	source, err := buildSource(cfg)
+	if err != nil {
+		return fmt.Errorf("build source: %w", err)
+	}
 
 	notifiers := buildNotifiers(cfg.Notification)
 	if len(notifiers) == 0 {
@@ -149,8 +183,7 @@ func run() error {
 	defer cancel()
 
 	slog.Info("starting log agent",
-		"loki_url", cfg.Loki.URL,
-		"poll_interval", pollInterval,
+		"source", cfg.Source.Type,
 		"window", window,
 		"min_count", minCount,
 	)

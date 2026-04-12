@@ -1,0 +1,26 @@
+# Local testing config — reads from a fixture file instead of Loki.
+# Usage: go run ./cmd/agent/ config/config-file.yaml
+#
+# To add your own logs: append NDJSON lines to testdata/sample_logs.ndjson
+# Format: {"service":"<name>","timestamp":"<RFC3339>","raw":"<log line>"}
+
+source:
+  type: file
+  file:
+    path: testdata/sample_logs.ndjson
+
+aggregation:
+  window: 5s    # short window so all fixture lines land in one pass
+  min_count: 1
+
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
+notification:
+  channels:
+    - type: log
