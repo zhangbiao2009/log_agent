@@ -1,23 +1,32 @@
-# Log Agent — Error Catcher
+# Log Agent — Intelligent Log Monitor
 
-A lightweight agent that tails logs from [Grafana Loki](https://grafana.com/oss/loki/), detects error-level entries, aggregates them over a configurable time window, and sends alerts to Slack (or stdout).
+An intelligent log monitoring agent that tails logs from [Grafana Loki](https://grafana.com/oss/loki/) (or local files), detects anomalies, correlates errors across services, diagnoses root causes using an LLM, and sends actionable alerts via Slack, Teams, email, or stdout.
 
 ## Architecture
 
 ```
-Loki ──poll──▶ LokiSource ──▶ Filter ──▶ Aggregator ──▶ Dispatcher ──▶ Slack / Log
-               (query_range)   (ParseLevel)  (time window)   (fan-out)
+Loki / File ──▶ Filter ──▶ PatternEngine ──▶ Anomaly ──▶ Correlator ──▶ Diagnoser ──▶ Lifecycle ──▶ Dispatcher
+ (L1)           (WARN+)     (Drain)          Detector    (dep graph)    (LLM)        Manager       ──▶ Slack
+                                             (spike/     (group into    (root cause   (dedup/       ──▶ Teams
+                                              new/rate)   incidents)    + severity)    resolve)     ──▶ Email
+                                                                                                   ──▶ Log
 ```
 
-1. **LokiSource** polls Loki's `query_range` API on a fixed interval, tracking a high-water mark to avoid duplicates.
-2. **Filter** parses each log line for a severity level (JSON → key=value → `[BRACKET]` → keyword fallback) and drops anything below WARN.
-3. **Aggregator** buckets matching lines per service over a time window, tracks the highest severity, and emits an `Alert` when the window closes.
-4. **Dispatcher** fans out each alert to all configured notifiers concurrently.
+| Stage | Package | Purpose |
+|---|---|---|
+| **L1: Ingest + Filter** | `internal/ingest/` | Poll Loki or replay files; drop non-error log lines |
+| **L2: Pattern Fingerprint** | `internal/pattern/` | Drain algorithm groups logs into templates |
+| **L3: Anomaly Detection** | `internal/anomaly/` | Spike, new-pattern, rate-jump detection with EMA baselines |
+| **L4: Cross-Service Correlator** | `internal/correlator/` | Group co-occurring anomalies into incidents using dependency graph |
+| **L5: LLM Diagnosis** | `internal/diagnosis/` | Send incident to DeepSeek for root cause + severity + fix suggestions |
+| **L6: Notify + Dedup** | `internal/notify/` | Incident lifecycle (OPEN→ONGOING→RESOLVED), severity routing, multi-channel dispatch |
 
 ## Prerequisites
 
 - Go 1.22+
-- A running Loki instance (or any Loki-compatible API)
+- A running Loki instance (or use file source for local testing)
+- (Optional) DeepSeek API key for LLM diagnosis
+- (Optional) Slack webhook URL, Gmail app password, or Teams webhook URL
 
 ## Quick Start
 
@@ -26,56 +35,131 @@ Loki ──poll──▶ LokiSource ──▶ Filter ──▶ Aggregator ──
 cd log_agent
 go build -o log-agent ./cmd/agent
 
-# Set your Slack webhook (optional — falls back to stdout logging)
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/T.../B.../xxx"
+# Run with local file source (no external dependencies)
+./log-agent config/config-file.yaml
 
-# Run with default config
-./log-agent
+# Run with Loki
+export GRAFANA_PASSWORD="..."
+./log-agent config/config.yaml
 
-# Or specify a custom config path
-./log-agent /path/to/config.yaml
+# Run with diagnosis (LLM)
+export LLM_API_KEY="your-deepseek-key"
+./log-agent config/config-diagnosis.yaml
+
+# Run with email notifications
+export SMTP_PASSWORD="your-gmail-app-password"
+export LLM_API_KEY="your-deepseek-key"
+./log-agent config/config-email.yaml
 ```
 
 ## Configuration
 
-The agent reads a YAML config file (default: `config/config.yaml`). Environment variables in the file are expanded automatically (e.g. `${SLACK_WEBHOOK_URL}`).
+The agent reads a YAML config file (default: `config/config.yaml`). Environment variables are expanded automatically (e.g. `${SLACK_WEBHOOK_URL}`).
 
 ```yaml
+source:
+  type: file                             # "loki" (default) or "file"
+  file:
+    path: testdata/sample_logs.ndjson    # NDJSON file for local testing
+
 loki:
-  url: "http://loki.internal:3100"   # Loki base URL (or Grafana proxy URL)
-  query: '{namespace="prod"}'         # LogQL stream selector
-  poll_interval: 10s                  # How often to poll (default: 10s)
-  tenant_id: ""                       # X-Scope-OrgID header for multi-tenant Loki
-  service_label: ""                   # Label key to extract service name (see below)
-  basic_auth_user: ""                 # HTTP basic auth username (e.g. for Grafana proxy)
-  basic_auth_password: "${GRAFANA_PASSWORD}"  # HTTP basic auth password
+  url: "http://loki.internal:3100"
+  query: '{namespace="prod"}'
+  poll_interval: 10s
+  tenant_id: ""
+  service_label: ""
+  basic_auth_user: ""
+  basic_auth_password: "${GRAFANA_PASSWORD}"
 
 aggregation:
-  window: 1m        # Aggregation window duration (default: 1m)
-  min_count: 1       # Minimum error count to trigger an alert (default: 1)
+  window: 1m
+  min_count: 1
+
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
+anomaly:
+  enabled: true
+  spike_multiplier: 3.0
+  rate_jump_factor: 5.0
+  ema_alpha: 0.3
+  min_samples: 3
+  new_pattern_grace: 24h
+
+correlator:
+  enabled: true
+  window: 2m
+  dependencies_file: config/dependencies.yaml
+
+diagnosis:
+  enabled: true
+  endpoint: https://api.deepseek.com/v1/chat/completions
+  model: deepseek-chat
+  max_tokens: 1024
+  temperature: 0
+  timeout: 30s
 
 notification:
+  dedup_window: 5m       # suppress duplicate incidents within this window
+  resolve_after: 10m     # auto-resolve after silence
+  check_interval: 1m     # how often to check for auto-resolve
   channels:
     - type: slack
       webhook_url: "${SLACK_WEBHOOK_URL}"
-    - type: log      # Prints alerts to stdout via slog
+      severities: [P1, P2, P3]
+    - type: email
+      smtp_host: "smtp.gmail.com"
+      smtp_port: 587
+      smtp_username: "alerts@company.com"
+      smtp_password: "${SMTP_PASSWORD}"
+      from: "alerts@company.com"
+      recipients: ["oncall@company.com"]
+      severities: [P1, P2]
+    - type: teams
+      webhook_url: "${TEAMS_WEBHOOK_URL}"
+      severities: [P1, P2, P3]
+    - type: log                          # always included as fallback
 ```
 
 ### Config Reference
 
 | Section | Field | Description | Default |
 |---|---|---|---|
-| `loki` | `url` | Loki HTTP base URL (or Grafana datasource proxy URL) | *required* |
-| `loki` | `query` | LogQL stream selector | *required* |
-| `loki` | `poll_interval` | Poll interval (Go duration) | `10s` |
-| `loki` | `tenant_id` | `X-Scope-OrgID` header for multi-tenant Loki | — |
-| `loki` | `service_label` | Stream label key to use as service name | auto-detect |
-| `loki` | `basic_auth_user` | HTTP basic auth username | — |
+| `source` | `type` | `loki` or `file` | `loki` |
+| `source.file` | `path` | NDJSON file path (file source only) | — |
+| `loki` | `url` | Loki HTTP base URL | *required for loki* |
+| `loki` | `query` | LogQL stream selector | *required for loki* |
+| `loki` | `poll_interval` | Poll interval | `10s` |
+| `loki` | `tenant_id` | `X-Scope-OrgID` header | — |
+| `loki` | `service_label` | Stream label for service name | auto-detect |
+| `loki` | `basic_auth_user` | HTTP basic auth user | — |
 | `loki` | `basic_auth_password` | HTTP basic auth password | — |
 | `aggregation` | `window` | Time window for batching errors | `1m` |
 | `aggregation` | `min_count` | Minimum errors before alerting | `1` |
-| `notification.channels[]` | `type` | `slack` or `log` | — |
-| `notification.channels[]` | `webhook_url` | Slack incoming webhook URL (slack only) | — |
+| `pattern` | `enabled` | Enable Drain pattern engine | `false` |
+| `pattern` | `depth` | Drain tree depth | `4` |
+| `pattern` | `similarity` | Merge threshold (0-1) | `0.5` |
+| `anomaly` | `enabled` | Enable anomaly detection | `false` |
+| `anomaly` | `spike_multiplier` | σ threshold for spike | `3.0` |
+| `anomaly` | `min_samples` | Windows before spike/rate-jump activate | `3` |
+| `correlator` | `enabled` | Enable cross-service correlation | `false` |
+| `correlator` | `window` | Time window for grouping | `2m` |
+| `correlator` | `dependencies_file` | Path to dependency graph YAML | — |
+| `diagnosis` | `enabled` | Enable LLM diagnosis | `false` |
+| `diagnosis` | `endpoint` | LLM API URL | — |
+| `diagnosis` | `model` | Model name | — |
+| `notification` | `dedup_window` | Suppress duplicates within this window | `5m` |
+| `notification` | `resolve_after` | Auto-resolve after silence | `10m` |
+| `notification.channels[]` | `type` | `slack`, `teams`, `email`, or `log` | — |
+| `notification.channels[]` | `severities` | Severity filter (empty = all) | all |
+| `notification.channels[]` | `webhook_url` | Webhook URL (slack/teams) | — |
+| `notification.channels[]` | `smtp_host` | SMTP server (email) | — |
+| `notification.channels[]` | `recipients` | Email recipients (email) | — |
 
 ### Service Name Extraction
 
@@ -136,28 +220,33 @@ go test -v ./...
 
 ```
 log_agent/
-├── cmd/agent/main.go          # Entry point, config loading, pipeline wiring
-├── config/config.yaml         # Default configuration
+├── cmd/agent/main.go                 # Entry point, config loading, pipeline wiring
+├── config/
+│   ├── config.yaml                   # Default Loki config
+│   ├── config-file.yaml              # Local file-source testing
+│   ├── config-correlator.yaml        # Correlator demo
+│   ├── config-diagnosis.yaml         # Diagnosis demo (DeepSeek)
+│   ├── config-email.yaml             # Email notification demo (Gmail)
+│   └── dependencies.yaml             # Service dependency graph
 ├── internal/
-│   ├── ingest/
-│   │   ├── source.go          # LogLine struct, LogSource interface
-│   │   ├── filter.go          # ParseLevel, Filter channel function
-│   │   ├── loki.go            # LokiSource (polling, response parsing)
-│   │   ├── filter_test.go     # 22 ParseLevel cases + Filter tests
-│   │   └── loki_test.go       # Response parsing, service fallback, streaming
-│   ├── notify/
-│   │   ├── notifier.go        # Alert struct, Notifier interface, Dispatcher
-│   │   ├── aggregator.go      # Time-window aggregation with Clock interface
-│   │   ├── slack.go           # Slack Block Kit formatting
-│   │   ├── log.go             # slog-based notifier
-│   │   ├── aggregator_test.go # Window flush, severity ranking, thresholds
-│   │   ├── dispatcher_test.go # Fan-out, partial/total failure
-│   │   ├── slack_test.go      # Block Kit, HTML escaping, error handling
-│   │   └── log_test.go        # Output verification
-│   └── testutil/
-│       ├── fake_clock.go      # Deterministic time for aggregator tests
-│       └── fake_loki.go       # httptest-based fake Loki server
-├── DESIGN.md                  # Overall architecture (6-layer design)
-├── PHASE1_DESIGN.md           # Phase 1 detailed design
-└── PHASE1_TEST_PLAN.md        # Phase 1 test plan
+│   ├── ingest/                       # L1: Loki/file source, level filter
+│   ├── pattern/                      # L2: Drain algorithm, preprocessing
+│   ├── anomaly/                      # L3: Spike/new-pattern/rate-jump detection
+│   ├── correlator/                   # L4: Cross-service grouping + dep graph
+│   ├── diagnosis/                    # L5: LLM prompt, client, response parser
+│   ├── notify/                       # L6: Notifiers, lifecycle, aggregator
+│   │   ├── notifier.go               #     Notifier interface, Dispatcher, routing
+│   │   ├── incident.go               #     Incident struct, status, ID generation
+│   │   ├── lifecycle.go              #     OPEN→ONGOING→RESOLVED state machine
+│   │   ├── aggregator.go             #     Time-window alert aggregation
+│   │   ├── slack.go                  #     Slack Block Kit webhook
+│   │   ├── teams.go                  #     Microsoft Teams Adaptive Card
+│   │   ├── email.go                  #     SMTP email (HTML template)
+│   │   └── log.go                    #     slog stdout notifier
+│   └── testutil/                     # Fake clock, fake Loki, mock notifier
+├── testdata/                         # Demo logs, mock servers
+├── DESIGN.md                         # Overall architecture (6-layer design)
+├── PHASE{1..5}_DESIGN.md             # Per-phase design docs
+├── PHASE{1..5}_TEST_PLAN.md          # Per-phase test plans
+└── docs/phase6-*.md                  # Phase 6 design & test plan
 ```

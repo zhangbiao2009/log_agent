@@ -3,7 +3,7 @@
 **Project**: Intelligent Log Monitor for Microservices  
 **Author**: bzhang  
 **Date**: April 9, 2026  
-**Status**: Draft  
+**Status**: Phases 1-6 implemented  
 
 ---
 
@@ -407,131 +407,145 @@ format (Slack blocks, Teams adaptive cards, HTML email, plain text SMS).
 
 ```
 log_agent/
-├── DESIGN.md               ← this file
+├── DESIGN.md                          ← this file
+├── README.md                          ← quick-start guide
+├── PHASE{1..5}_DESIGN.md              ← per-phase design docs
+├── PHASE{1..5}_TEST_PLAN.md           ← per-phase test plans
+├── docs/
+│   └── phase6-notify-dedup-*.md       ← Phase 6 design & test plan
 ├── config/
-│   ├── services.yaml       ← service dependency graph
-│   └── config.yaml         ← thresholds, Loki URL, notification channels, etc.
+│   ├── config.yaml                    ← default Loki config
+│   ├── config-file.yaml               ← local file-source testing
+│   ├── config-correlator.yaml         ← correlator demo
+│   ├── config-diagnosis.yaml          ← diagnosis demo (DeepSeek)
+│   ├── config-email.yaml              ← email notification demo (Gmail SMTP)
+│   └── dependencies.yaml              ← service dependency graph
 ├── cmd/
 │   └── agent/
-│       └── main.go         ← entry point
+│       └── main.go                    ← entry point, config, pipeline wiring
 ├── internal/
 │   ├── ingest/
-│   │   ├── source.go       ← LogSource interface
-│   │   ├── loki.go         ← Loki API implementation
-│   │   └── filter.go       ← fast ERROR/FATAL/WARN filter
-│   ├── drain/
-│   │   ├── drain.go        ← Drain algorithm implementation
-│   │   ├── tree.go         ← prefix tree data structure
-│   │   └── preprocess.go   ← regex normalization (IPs, UUIDs, etc.)
+│   │   ├── source.go                  ← LogLine struct, LogSource interface
+│   │   ├── loki.go                    ← Loki API polling source
+│   │   ├── file.go                    ← NDJSON file replay source
+│   │   ├── filter.go                  ← ParseLevel, level-aware filter
+│   │   └── *_test.go
+│   ├── pattern/
+│   │   ├── drain.go                   ← Drain algorithm (prefix tree)
+│   │   ├── preprocess.go              ← regex normalization (IP, UUID, NUM)
+│   │   ├── engine.go                  ← PatternEngine pipeline stage
+│   │   └── *_test.go
 │   ├── anomaly/
-│   │   ├── detector.go     ← spike / new-pattern / rate-jump detection
-│   │   └── stats.go        ← rolling baseline (mean, stddev)
+│   │   ├── detector.go                ← spike / new-pattern / rate-jump
+│   │   ├── baseline.go                ← EMA rolling baseline (mean, stddev)
+│   │   ├── store.go                   ← in-memory baseline store
+│   │   └── *_test.go
 │   ├── correlator/
-│   │   ├── correlator.go   ← cross-service incident grouping
-│   │   └── depgraph.go     ← load + query dependency graph
+│   │   ├── correlator.go              ← time-window cross-service grouping
+│   │   ├── depgraph.go                ← YAML dependency graph loader
+│   │   ├── wrap.go                    ← WrapAlerts bypass (no correlator)
+│   │   └── *_test.go
 │   ├── diagnosis/
-│   │   ├── llm.go          ← LLM prompt assembly + call
-│   │   └── rag.go          ← search past incidents for context
+│   │   ├── diagnoser.go               ← Diagnoser pipeline stage
+│   │   ├── llm.go                     ← HTTP LLM client (DeepSeek API)
+│   │   ├── prompt.go                  ← prompt assembly
+│   │   ├── parse.go                   ← LLM response parser
+│   │   └── *_test.go
 │   ├── notify/
-│   │   ├── notifier.go     ← Notifier interface + dispatcher (fan-out to channels)
-│   │   ├── slack.go        ← Slack webhook implementation
-│   │   ├── teams.go        ← Microsoft Teams webhook implementation
-│   │   ├── email.go        ← SMTP / SendGrid implementation
-│   │   ├── sms.go          ← Twilio / SNS implementation
-│   │   ├── pagerduty.go    ← PagerDuty Events API implementation
-│   │   ├── webhook.go      ← Generic HTTP POST (custom integrations)
-│   │   └── dedup.go        ← incident lifecycle (open/ongoing/resolved)
-│   └── store/
-│       └── store.go        ← persistence for baselines + incidents (SQLite/BadgerDB)
-├── incidents/               ← past incident post-mortems (for RAG)
-│   └── 2025-09-08-q3-outage.md
+│   │   ├── notifier.go                ← Notifier interface, Dispatcher, severity routing
+│   │   ├── incident.go                ← Incident struct, status types, ID generation
+│   │   ├── lifecycle.go               ← LifecycleManager (OPEN→ONGOING→RESOLVED, dedup)
+│   │   ├── aggregator.go              ← time-window alert aggregation
+│   │   ├── slack.go                   ← Slack Block Kit webhook
+│   │   ├── teams.go                   ← Microsoft Teams Adaptive Card webhook
+│   │   ├── email.go                   ← SMTP email (HTML template)
+│   │   ├── log.go                     ← slog-based stdout notifier
+│   │   └── *_test.go
+│   └── testutil/
+│       ├── fake_clock.go              ← deterministic time for tests
+│       ├── fake_loki.go               ← httptest-based fake Loki
+│       └── mock_notifier.go           ← mock notifier for pipeline tests
+├── testdata/
+│   ├── sample_logs.ndjson             ← demo log data (single-service)
+│   ├── correlator_demo.ndjson         ← demo log data (multi-service cascade)
+│   ├── mock_llm_server.go            ← local mock LLM for testing
+│   └── mock_smtp_server.go           ← local mock SMTP for testing
 └── go.mod
 ```
 
 ## 6. Phased Roadmap
 
-### Phase 1: Error Catcher (Week 1-2)
+### Phase 1: Error Catcher ✅
 
 **Goal:** Get value immediately — a program that tails logs and sends error
 notifications to any configured channel.
 
-**Build:**
-- `internal/ingest/` — connect to Loki, stream ERROR/FATAL logs
-- `internal/notify/notifier.go` — `Notifier` interface + dispatcher
-- `internal/notify/slack.go` — first channel implementation (Slack)
-- `cmd/agent/main.go` — wire them together
+**Built:**
+- `internal/ingest/` — Loki polling source + file replay source, level-aware filter
+- `internal/notify/notifier.go` — `Notifier` interface + Dispatcher (concurrent fan-out)
+- `internal/notify/slack.go` — Slack Block Kit webhook
+- `internal/notify/log.go` — slog-based stdout notifier
+- `internal/notify/aggregator.go` — time-window alert aggregation
+- `cmd/agent/main.go` — YAML config loading, pipeline wiring, graceful shutdown
 
-**Output:** "Service X produced 50 error logs in the last minute."
-
-**Value:** Even without AI, engineers get notified of problems faster.
-Adding new channels (Teams, email, SMS) is just implementing the
-`Notifier` interface — no pipeline changes needed.
-
-### Phase 2: Pattern Grouping (Week 3-4)
+### Phase 2: Pattern Grouping ✅
 
 **Goal:** Stop Slack spam. Group identical errors into patterns.
 
-**Build:**
-- `internal/drain/` — implement Drain algorithm
-- Integrate into pipeline between ingest and notify
+**Built:**
+- `internal/pattern/drain.go` — Drain algorithm (prefix tree + similarity matching)
+- `internal/pattern/preprocess.go` — regex normalization (IP, UUID, numbers)
+- `internal/pattern/engine.go` — PatternEngine pipeline stage
 
-**Output:** "Service X has 3 error patterns: DB timeout (500x), parse
-error (1x), null pointer (1x)."
-
-**Value:** Clean, deduplicated alerts. Engineers immediately see *what kinds*
-of errors are happening.
-
-### Phase 3: Anomaly Detection (Week 5-6)
+### Phase 3: Anomaly Detection ✅
 
 **Goal:** Only alert on *meaningful* changes, not constant background noise.
 
-**Build:**
-- `internal/anomaly/` — rolling baselines + spike detection
-- `internal/store/` — persist baselines across restarts
+**Built:**
+- `internal/anomaly/detector.go` — spike, new-pattern, rate-jump detection
+- `internal/anomaly/baseline.go` — EMA rolling baseline (mean + stddev)
+- `internal/anomaly/store.go` — in-memory baseline store (per-service, per-pattern)
 
-**Output:** Only fires when something *changes*: new error type, spike in
-existing error, or overall error rate jump.
-
-**Value:** Massive reduction in alert noise.
-
-### Phase 4: LLM Diagnosis (Week 7-8)
-
-**Goal:** Tell engineers *what's wrong and how to fix it*, not just *what happened*.
-
-**Build:**
-- `internal/diagnosis/llm.go` — prompt assembly + LLM call
-- Integrate recent deploy info into prompt
-
-**Output:** "The DB timeout spike started 2 minutes after deploying
-payment-service v1.5. The new version likely has a connection pool
-misconfiguration. Recommend: rollback to v1.4."
-
-**Value:** Reduces mean-time-to-diagnosis from hours to minutes.
-
-### Phase 5: Cross-Service Correlation (Week 9-10)
+### Phase 4: Cross-Service Correlation ✅
 
 **Goal:** Stop treating cascading failures as separate incidents.
 
-**Build:**
-- `internal/correlator/` — time-window grouping + dependency graph
-- `config/services.yaml` — dependency config
+**Built:**
+- `internal/correlator/correlator.go` — time-window grouping + dependency graph lookup
+- `internal/correlator/depgraph.go` — YAML dependency graph loader + root-cause heuristic
+- `internal/correlator/wrap.go` — WrapAlerts bypass for uncorrelated mode
+- `config/dependencies.yaml` — service dependency graph
 
-**Output:** "Root cause is bank-gateway (just deployed). payment-service
-and order-service are cascading failures."
+### Phase 5: LLM Diagnosis ✅
 
-**Value:** Engineers fix the root cause instead of chasing symptoms.
+**Goal:** Tell engineers *what's wrong and how to fix it*, not just *what happened*.
 
-### Phase 6: RAG Over Past Incidents (Week 11-12)
+**Built:**
+- `internal/diagnosis/diagnoser.go` — Diagnoser pipeline stage (concurrent LLM calls)
+- `internal/diagnosis/llm.go` — HTTP LLM client (DeepSeek API compatible)
+- `internal/diagnosis/prompt.go` — prompt assembly (incident context → structured prompt)
+- `internal/diagnosis/parse.go` — LLM response parser (extracts severity, diagnosis, suggestions)
+
+### Phase 6: Notification + Lifecycle Management ✅
+
+**Goal:** Deliver diagnosis to the right people with incident lifecycle (dedup, auto-resolve).
+
+**Built:**
+- `internal/notify/lifecycle.go` — LifecycleManager: OPEN→ONGOING→RESOLVED state machine,
+  dedup window, auto-resolve timer
+- `internal/notify/email.go` — SMTP email notifier (HTML template, severity-colored headers)
+- `internal/notify/teams.go` — Microsoft Teams webhook (Adaptive Card format)
+- `internal/notify/notifier.go` — severity routing via `NotifierRoute` + `NewRoutedDispatcher`
+- `internal/notify/incident.go` — `IncidentStatus`, `EventType`, `Duration` fields
+- Updated Slack + Log notifiers with event-type-aware formatting
+
+### Future: RAG Over Past Incidents
 
 **Goal:** Learn from history. "This looks like the outage from last month."
 
-**Build:**
+**Plan:**
 - `internal/diagnosis/rag.go` — embed + search incident post-mortems
 - `incidents/` directory — historical post-mortem collection
-
-**Output:** LLM prompt includes: "Similar past incident: Q3 2025 outage 
-was caused by misconfigured DB_HOST after deploy. Fix was to rollback + 
-fix env vars."
 
 **Value:** Institutional knowledge is automatically surfaced during incidents.
 
@@ -544,8 +558,8 @@ fix env vars."
 | Anomaly detection | Rolling mean + 3σ | Simple, interpretable, per-pattern baselines. |
 | LLM | DeepSeek via litellm | Cheap, good at structured reasoning. |
 | Dependency graph | Static YAML (phase 1), traces later | Get value immediately, improve accuracy later. |
-| Persistence | SQLite or BadgerDB | Lightweight embedded store, no external infra needed. |
-| Notification | Pluggable `Notifier` interface | Slack first, add Teams/email/SMS/PagerDuty by implementing the interface. |
+| Persistence | In-memory (baselines) | Lightweight; baselines rebuild on restart. |
+| Notification | Pluggable `Notifier` interface | Slack, Teams, Email, Log implemented. Add SMS/PagerDuty by implementing the interface. |
 
 ## 8. Cost Estimate
 
