@@ -80,21 +80,30 @@ with minor numeric differences).
 //   3. UUIDs → <UUID>
 //   4. Hex strings (≥8 chars) → <HEX>
 //   5. Numbers (integers and decimals) → <NUM>
+//
+// If raw is valid JSON, fields are extracted and concatenated in this fixed
+// order: msg (or message) → method → err (or error). Fields that are absent
+// or empty are skipped. This order is deterministic and puts the primary
+// message first, which gives Drain the most stable prefix tokens.
 func Preprocess(raw string) string
 ```
 
 **JSON log handling:** Most of the logs we see are JSON (e.g. the
 notifications-processor). Before Drain processes a log line:
 1. Try to parse as JSON.
-2. If successful, extract the `msg` (or `message`, `error`, `err`) field
-   value(s) and concatenate them. This is the string we feed to Drain.
+2. If successful, extract fields in order: `msg`/`message`, then `method`,
+   then `err`/`error`. Concatenate non-empty values with a space.
 3. This prevents JSON key names, timestamps, and structural characters
    from polluting templates.
+
+**Concatenation order is fixed** — always `msg → method → err`. This ensures
+that two log lines with the same content but different JSON key ordering
+produce identical preprocessed strings.
 
 Example:
 ```
 Input:  {"level":"error","method":"HandleUpdateEventSubtypeCRD","msg":"EventSubtypes.UpdateStatus fail","err":"Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com \"comingsoon\": the object has been modified"}
-After:  EventSubtypes.UpdateStatus fail Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com "comingsoon": the object has been modified
+After:  EventSubtypes.UpdateStatus fail HandleUpdateEventSubtypeCRD Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com "comingsoon": the object has been modified
 ```
 
 **Why not just pattern on the raw JSON?** The JSON keys and timestamps are
@@ -116,7 +125,12 @@ type DrainConfig struct {
     SimilarityThreshold float64 // merge threshold (default: 0.5)
     MaxChildren         int     // max children per tree node (default: 100)
     MaxPatterns         int     // max total patterns to track (default: 10000)
-    ExtractJSONMessage  bool    // extract msg/err from JSON before Drain (default: true)
+}
+
+// node is an internal tree node. Leaf nodes hold pattern clusters.
+type node struct {
+    children map[string]*node // key: token value or "<*>" for wildcard
+    clusters []*Pattern       // only populated at leaf level
 }
 
 // Drain is an online log parser that discovers patterns.
@@ -175,13 +189,20 @@ prevents memory growth from cardinality explosions.
 ```go
 // engine.go
 
+// PatternEngineConfig controls the PatternEngine. It embeds DrainConfig
+// and adds engine-level options (JSON extraction) that are not Drain's concern.
+type PatternEngineConfig struct {
+    Drain               DrainConfig
+    ExtractJSONMessage  bool // extract msg/method/err from JSON before Drain (default: true)
+}
+
 // PatternEngine wraps Drain and provides the channel-based pipeline stage.
 type PatternEngine struct {
     drain  *Drain
-    preproc func(string) string // Preprocess function
+    config PatternEngineConfig
 }
 
-func NewPatternEngine(cfg DrainConfig) *PatternEngine
+func NewPatternEngine(cfg PatternEngineConfig) *PatternEngine
 
 // Run consumes filtered log lines and emits them with PatternID
 // and PatternTemplate set.
@@ -249,19 +270,22 @@ type PatternSummary struct {
 
 ### 3.3 Aggregator — group by (service, patternID)
 
-The aggregator bucket key changes from `service` to `service + "|" + patternID`.
-When PatternID is empty (Phase 1 fallback), behavior is identical to before.
+The aggregator bucket key changes from `service` (a string) to a struct key
+that holds both service and patternID. Using a struct avoids any separator
+ambiguity — service names could theoretically contain `"|"` or any other
+delimiter.
 
 ```go
 // aggregator.go (modified)
 
-func bucketKey(line ingest.LogLine) string {
-    if line.PatternID != "" {
-        return line.Service + "|" + line.PatternID
-    }
-    return line.Service
+type bucketKey struct {
+    service   string
+    patternID string // empty string for Phase 1 mode
 }
 ```
+
+Map lookup on a struct key is supported by Go natively (all fields are
+comparable). No hash helper needed.
 
 **Flush algorithm (changed from Phase 1):**
 
@@ -273,7 +297,7 @@ flush(buckets):
   serviceMap = map[service] → { level, count, patterns[], samples[] }
 
   for key, bucket in buckets:
-    service, patternID = splitBucketKey(key)  // split on "|"
+    service, patternID = key.service, key.patternID
     sa = serviceMap[service]
     sa.count += bucket.count
     sa.level  = max(sa.level, bucket.level)
@@ -366,11 +390,14 @@ filtered := ingest.Filter(ctx, logCh)
 
 var pipelined <-chan ingest.LogLine
 if cfg.Pattern.Enabled {
-    engine := pattern.NewPatternEngine(pattern.DrainConfig{
-        Depth:               cfg.Pattern.Depth,
-        SimilarityThreshold: cfg.Pattern.Similarity,
-        MaxChildren:         cfg.Pattern.MaxChildren,
-        MaxPatterns:         cfg.Pattern.MaxPatterns,
+    engine := pattern.NewPatternEngine(pattern.PatternEngineConfig{
+        ExtractJSONMessage: cfg.Pattern.ExtractJSONMessage,
+        Drain: pattern.DrainConfig{
+            Depth:               cfg.Pattern.Depth,
+            SimilarityThreshold: cfg.Pattern.Similarity,
+            MaxChildren:         cfg.Pattern.MaxChildren,
+            MaxPatterns:         cfg.Pattern.MaxPatterns,
+        },
     })
     pipelined = engine.Run(ctx, filtered)
 } else {

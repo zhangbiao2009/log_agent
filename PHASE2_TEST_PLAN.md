@@ -71,7 +71,7 @@ aggregation pipeline.
 | # | Input | Expected Output |
 |---|---|---|
 | 1 | `{"containerVersion":"Container version environment variable unknown.","err":"Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com \"comingsoon\": the object has been modified; please apply your changes to the latest version and try again","level":"error","method":"HandleUpdateEventSubtypeCRD","msg":"EventSubtypes.UpdateStatus fail","request_id":"","time":"2026-04-12T02:00:20Z"}` | `EventSubtypes.UpdateStatus fail HandleUpdateEventSubtypeCRD Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com "comingsoon": the object has been modified; please apply your changes to the latest version and try again` |
-| 2 | Same as above but with `"comingsoon"` replaced by `"policy-rules-order-v2"` | Should differ only in the quoted resource name |
+| 2 | Same as row 1 but `"comingsoon"` replaced by `"policy-rules-order-v2"` | `EventSubtypes.UpdateStatus fail HandleUpdateEventSubtypeCRD Operation cannot be fulfilled on eventsubtypes.main.notifications.infoblox.com "policy-rules-order-v2": the object has been modified; please apply your changes to the latest version and try again` |
 
 ---
 
@@ -164,11 +164,19 @@ similarity.
 
 ### TC-D11: Max patterns — LRU eviction
 
-**Setup:** Drain with `MaxPatterns = 3`. Create 4 distinct patterns
-(dissimilar enough not to merge).
+**Setup:** Drain with `MaxPatterns = 3`. Process lines in this exact order
+to establish a known access sequence:
+1. Process `"alpha error occurred"` → Pattern A (LastMatched = T1)
+2. Process `"beta error occurred"` → Pattern B (LastMatched = T2)
+3. Process `"gamma error occurred"` → Pattern C (LastMatched = T3)
+4. Process `"alpha error occurred"` again → updates Pattern A (LastMatched = T4, now most recent)
+5. Process `"delta error occurred"` → needs to create Pattern D, eviction required
 
-**Expected:** After the 4th pattern is created, only 3 patterns remain.
-The least recently matched is evicted. The newest pattern is present.
+At step 5, access order is: B (T2) < C (T3) < A (T4).
+Pattern B is the LRU candidate.
+
+**Expected:** Pattern D is created. Pattern B is evicted.
+After eviction: patterns A, C, D are present. Pattern B is absent.
 
 ### TC-D12: Empty input
 
@@ -200,10 +208,18 @@ change if no merge occurs.
 **Expected:** Returned pattern has a new ID (hash of new template). The old
 ID is no longer in the catalog.
 
-### TC-D16: Concurrent safety — caller is responsible
+### TC-D16: Drain is not goroutine-safe
 
-**Note:** This is a documentation test. Drain is explicitly NOT thread-safe.
-Verify the exported doc comment says so.
+**Setup:** Create one `Drain`. Launch 2 goroutines, each calling
+`drain.Process()` 100 times concurrently without synchronization.
+
+**Expected:** Running with `go test -race` reports a data race.
+This confirms the documented contract: callers must serialize access.
+
+> **Note:** This test is expected to FAIL the race detector — it is a
+> negative test that verifies the absence of internal locking. Mark it
+> with `//go:build race` so it only runs with `-race` and name it
+> `TestDrain_DataRaceDetected`.
 
 ### TC-D17: Real-world pattern convergence
 
@@ -263,8 +279,8 @@ string (not the preprocessed version).
 
 ### TC-E08: JSON extraction disabled
 
-**Setup:** Create PatternEngine with `ExtractJSONMessage: false`. Send a
-JSON log line.
+**Setup:** Create PatternEngine with `PatternEngineConfig{ExtractJSONMessage: false}`.
+Send a JSON log line.
 **Expected:** PatternID is based on the full raw JSON string, not just
 extracted message fields. Pattern template includes JSON structure tokens.
 
@@ -396,19 +412,22 @@ poll interval — the pipeline won't become a bottleneck.
 
 ### TC-INT01: Full pipeline with pattern detection
 
-**Setup:** httptest fake Loki returning 100 log lines:
-- 60x similar error A (with different variable parts)
-- 30x similar error B
-- 10x similar error C
+**Setup:** httptest fake Loki returning exactly 105 log lines,
+designed to produce exactly 3 patterns after preprocessing + Drain:
+- 60x `"EventSubtypes.UpdateStatus fail: cannot be fulfilled on <service-X>: modified"` — vary `<service-X>` across 60 different values so Drain generalizes the token.
+- 30x `"EventSubtypes.Update fail: <resource-Y> is invalid"` — vary `<resource-Y>` across 30 values.
+- 15x `"EventSubtypes.Delete fail: <name-Z> not found"` — vary `<name-Z>` across 15 values.
 
+All 105 lines have `"level":"error"` so the Filter passes all of them.
 Run full pipeline: LokiSource → Filter → PatternEngine → Aggregator → MockNotifier.
 Wait for one window flush.
 
-**Expected:** MockNotifier receives 1 Alert with approximately 3 patterns:
-- Pattern for error A, count ~60
-- Pattern for error B, count ~30
-- Pattern for error C, count ~10
-Total count = 100.
+**Expected:** MockNotifier receives **exactly 1 Alert** with **exactly 3 patterns**:
+- Pattern A: template contains `UpdateStatus fail`, count = 60
+- Pattern B: template contains `Update fail`, count = 30
+- Pattern C: template contains `Delete fail`, count = 15
+
+Total `Alert.Count` = 105. Patterns sorted by count descending.
 
 ### TC-INT02: Pattern disabled — Phase 1 behavior
 
