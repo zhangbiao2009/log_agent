@@ -1,0 +1,87 @@
+# Phase 4 cross-service correlation demo fixture.
+#
+# Services used: order-service → payment-service → bank-gateway
+# (all in the same connected component per config/dependencies.yaml)
+#
+# Scenario: bank-gateway goes down, causing cascading failures upstream.
+#
+# Expected output:
+#   Windows 1-3: baseline establishment — all patterns flagged [NEW]
+#   Window 4: anomaly window — SPIKE on all three services
+#     The correlator groups them into ONE incident:
+#       root cause: bank-gateway (depth=2, deepest)
+#       dep chain: bank-gateway → payment-service → order-service
+#
+# Config: use config/config-correlator.yaml
+# Run:    cd log_agent && go run ./cmd/agent/ config/config-correlator.yaml
+# Total run time: ~25s (4 × 6s pauses + log processing)
+
+# ── Window 1: baseline ───────────────────────────────────────────────────────
+{"service":"order-service","timestamp":"2026-04-12T10:00:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-001\",\"error\":\"downstream timeout\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:00:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-002\",\"error\":\"downstream timeout\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:00:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-001\",\"error\":\"connection refused\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:00:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-002\",\"error\":\"connection refused\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:00:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:00:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 2: baseline continues ─────────────────────────────────────────────
+{"service":"order-service","timestamp":"2026-04-12T10:01:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-011\",\"error\":\"downstream timeout\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:01:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-012\",\"error\":\"downstream timeout\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:01:03Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-013\",\"error\":\"downstream timeout\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:01:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-011\",\"error\":\"connection refused\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:01:05Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-012\",\"error\":\"connection refused\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:01:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:01:07Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 3: baseline complete (N=3 → min_samples met for window 4) ─────────
+{"service":"order-service","timestamp":"2026-04-12T10:02:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-021\",\"error\":\"downstream timeout\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:02:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-022\",\"error\":\"downstream timeout\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:02:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-021\",\"error\":\"connection refused\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:02:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-022\",\"error\":\"connection refused\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:02:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:02:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 4: cascading failure — bank-gateway down ──────────────────────────
+# bank-gateway: 15 errors vs baseline ~2 → SPIKE
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"service":"bank-gateway","timestamp":"2026-04-12T10:03:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+# payment-service: 12 errors vs baseline ~2 → SPIKE (bank-gateway unreachable)
+{"service":"payment-service","timestamp":"2026-04-12T10:03:06Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-101\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:06Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-102\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:07Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-103\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:07Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-104\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:08Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-105\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:08Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-106\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:09Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-107\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:09Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-108\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:10Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-109\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:10Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-110\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:11Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-111\",\"error\":\"connection refused to bank-gateway:443\"}"}
+{"service":"payment-service","timestamp":"2026-04-12T10:03:11Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-112\",\"error\":\"connection refused to bank-gateway:443\"}"}
+# order-service: 10 errors vs baseline ~2 → SPIKE (payment-service failing)
+{"service":"order-service","timestamp":"2026-04-12T10:03:12Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-101\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:12Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-102\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:13Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-103\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:13Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-104\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:14Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-105\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:14Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-106\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:15Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-107\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:15Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-108\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:16Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-109\",\"error\":\"payment-service returned 503\"}"}
+{"service":"order-service","timestamp":"2026-04-12T10:03:16Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-110\",\"error\":\"payment-service returned 503\"}"}
