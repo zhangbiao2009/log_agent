@@ -385,7 +385,7 @@ func TestLifecycle_Resolved_RemovedFromTracking(t *testing.T) {
 
 	in <- makeIncident("inc-1")
 	time.Sleep(200 * time.Millisecond) // wait for auto-resolve
-	in <- makeIncident("inc-1") // re-open
+	in <- makeIncident("inc-1")        // re-open
 	close(in)
 
 	results := wait()

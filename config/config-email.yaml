@@ -1,0 +1,52 @@
+# Email notification test config.
+# Usage:
+#   SMTP_PASSWORD="your-app-password" LLM_API_KEY="your-deepseek-key" go run ./cmd/agent/ config/config-email.yaml
+
+source:
+  type: file
+  file:
+    path: testdata/correlator_demo.ndjson
+
+aggregation:
+  window: 5s
+  min_count: 1
+
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
+anomaly:
+  enabled: false
+
+correlator:
+  enabled: true
+  window: 5s
+  dependencies_file: config/dependencies.yaml
+
+diagnosis:
+  enabled: true
+  endpoint: https://api.deepseek.com/v1/chat/completions
+  model: deepseek-chat
+  max_tokens: 1024
+  temperature: 0
+  timeout: 30s
+
+notification:
+  dedup_window: 10s
+  resolve_after: 15s
+  check_interval: 5s
+  channels:
+    - type: log
+    - type: email
+      smtp_host: "smtp.gmail.com"
+      smtp_port: 587
+      smtp_username: "mrbiaozhang@gmail.com"
+      smtp_password: "${SMTP_PASSWORD}"
+      from: "mrbiaozhang@gmail.com"
+      recipients:
+        - "zhanbiao2000@gmail.com"
+      use_tls: false
