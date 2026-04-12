@@ -3,7 +3,7 @@ package correlator
 import (
 	"context"
 
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/notify"
 )
 
 // WrapAlerts is the bypass path when the correlator is disabled.

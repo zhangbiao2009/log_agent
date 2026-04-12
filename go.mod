@@ -1,4 +1,4 @@
-module github.com/zhangbiao2009/agent_exercise/log_agent
+module github.com/zhangbiao2009/log_agent
 
 go 1.25.0
 

@@ -9,12 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/anomaly"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/correlator"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/diagnosis"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/pattern"
+	"github.com/zhangbiao2009/log_agent/internal/anomaly"
+	"github.com/zhangbiao2009/log_agent/internal/correlator"
+	"github.com/zhangbiao2009/log_agent/internal/diagnosis"
+	"github.com/zhangbiao2009/log_agent/internal/ingest"
+	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/pattern"
 	"gopkg.in/yaml.v3"
 )
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/notify"
 )
 
 // MockLLM implements LLMClient for testing.

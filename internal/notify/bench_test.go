@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/testutil"
+	"github.com/zhangbiao2009/log_agent/internal/ingest"
+	"github.com/zhangbiao2009/log_agent/internal/testutil"
 )
 
 func BenchmarkAggregator_Ingest(b *testing.B) {

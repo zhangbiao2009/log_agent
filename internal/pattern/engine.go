@@ -3,7 +3,7 @@ package pattern
 import (
 	"context"
 
-	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
+	"github.com/zhangbiao2009/log_agent/internal/ingest"
 )
 
 // PatternEngineConfig controls the PatternEngine. It separates engine-level
