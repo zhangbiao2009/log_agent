@@ -42,9 +42,13 @@ The agent reads a YAML config file (default: `config/config.yaml`). Environment 
 
 ```yaml
 loki:
-  url: "http://loki.internal:3100"   # Loki base URL
+  url: "http://loki.internal:3100"   # Loki base URL (or Grafana proxy URL)
   query: '{namespace="prod"}'         # LogQL stream selector
   poll_interval: 10s                  # How often to poll (default: 10s)
+  tenant_id: ""                       # X-Scope-OrgID header for multi-tenant Loki
+  service_label: ""                   # Label key to extract service name (see below)
+  basic_auth_user: ""                 # HTTP basic auth username (e.g. for Grafana proxy)
+  basic_auth_password: "${GRAFANA_PASSWORD}"  # HTTP basic auth password
 
 aggregation:
   window: 1m        # Aggregation window duration (default: 1m)
@@ -61,13 +65,37 @@ notification:
 
 | Section | Field | Description | Default |
 |---|---|---|---|
-| `loki` | `url` | Loki HTTP base URL | *required* |
+| `loki` | `url` | Loki HTTP base URL (or Grafana datasource proxy URL) | *required* |
 | `loki` | `query` | LogQL stream selector | *required* |
 | `loki` | `poll_interval` | Poll interval (Go duration) | `10s` |
+| `loki` | `tenant_id` | `X-Scope-OrgID` header for multi-tenant Loki | — |
+| `loki` | `service_label` | Stream label key to use as service name | auto-detect |
+| `loki` | `basic_auth_user` | HTTP basic auth username | — |
+| `loki` | `basic_auth_password` | HTTP basic auth password | — |
 | `aggregation` | `window` | Time window for batching errors | `1m` |
 | `aggregation` | `min_count` | Minimum errors before alerting | `1` |
 | `notification.channels[]` | `type` | `slack` or `log` | — |
 | `notification.channels[]` | `webhook_url` | Slack incoming webhook URL (slack only) | — |
+
+### Service Name Extraction
+
+The agent groups errors by **service name**, extracted from Loki stream labels:
+
+- If `service_label` is set (e.g. `"app"`), that label's value is used directly.
+- Otherwise, it falls back through: `service` → `app` → `container` → `job` → `"unknown"`.
+
+### Grafana Proxy Mode
+
+If Loki is not directly reachable, you can point the agent at a Grafana datasource proxy:
+
+```yaml
+loki:
+  url: "http://localhost:3000/api/datasources/proxy/uid/<datasource-uid>"
+  basic_auth_user: "admin"
+  basic_auth_password: "${GRAFANA_PASSWORD}"
+```
+
+Grafana handles the tenant ID header automatically in this mode.
 
 ## Level Detection
 
