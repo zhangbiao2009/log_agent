@@ -9,14 +9,23 @@ import (
 	"time"
 )
 
+// PatternSummary is a per-pattern rollup within an alert.
+type PatternSummary struct {
+	Template    string
+	Count       int
+	Level       string
+	SampleLines []string // up to 3 representative lines
+}
+
 // Alert is the data sent to notification channels.
 type Alert struct {
 	Service     string
-	Level       string        // highest severity seen (FATAL > ERROR > WARN)
-	Count       int           // number of error lines in the window
-	Window      time.Duration // aggregation window
-	SampleLines []string      // up to 5 example log lines
-	Timestamp   time.Time     // window end time
+	Level       string           // highest severity seen (FATAL > ERROR > WARN)
+	Count       int              // number of error lines in the window
+	Window      time.Duration    // aggregation window
+	SampleLines []string         // up to 5 example log lines (Phase 1 fallback)
+	Patterns    []PatternSummary // per-pattern breakdown (empty if pattern engine disabled)
+	Timestamp   time.Time        // window end time
 }
 
 // Notifier is the interface all notification channels implement.

@@ -21,6 +21,21 @@ func NewLogNotifier(logger *slog.Logger) *LogNotifier {
 func (l *LogNotifier) Name() string { return "log" }
 
 func (l *LogNotifier) Send(_ context.Context, alert Alert) error {
+	if len(alert.Patterns) > 0 {
+		var sb strings.Builder
+		for _, p := range alert.Patterns {
+			sb.WriteString(fmt.Sprintf("\n  [%dx %s] %s", p.Count, p.Level, p.Template))
+		}
+		l.Logger.Info("ALERT",
+			"service", alert.Service,
+			"level", alert.Level,
+			"count", alert.Count,
+			"window", alert.Window.String(),
+			"patterns", sb.String(),
+		)
+		return nil
+	}
+
 	samples := ""
 	if len(alert.SampleLines) > 0 {
 		var sb strings.Builder

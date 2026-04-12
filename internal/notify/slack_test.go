@@ -118,3 +118,102 @@ func containsImpl(s, substr string) bool {
 	}
 	return false
 }
+
+func TestSlackNotifier_PatternBlocks(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	alert := Alert{
+		Service: "myapp",
+		Level:   "ERROR",
+		Count:   5,
+		Window:  1 * time.Minute,
+		Patterns: []PatternSummary{
+			{
+				Template:    "connection timeout to <*>",
+				Count:       3,
+				Level:       "ERROR",
+				SampleLines: []string{"connection timeout to host1"},
+			},
+			{
+				Template:    "disk write error",
+				Count:       2,
+				Level:       "WARN",
+				SampleLines: []string{"disk write error"},
+			},
+		},
+		Timestamp: time.Now(),
+	}
+
+	if err := sn.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks, ok := msg["blocks"].([]interface{})
+	if !ok {
+		t.Fatal("expected blocks array")
+	}
+	// Header block + 2 pattern blocks.
+	if len(blocks) < 3 {
+		t.Fatalf("expected at least 3 blocks (header + 2 patterns), got %d", len(blocks))
+	}
+
+	// Check that pattern template appears in one of the blocks.
+	found := false
+	for _, b := range blocks[1:] {
+		block := b.(map[string]interface{})
+		text := block["text"].(map[string]interface{})["text"].(string)
+		if contains(text, "connection timeout to") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("pattern template not found in slack blocks")
+	}
+}
+
+func TestSlackNotifier_FallsBackToSamples(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sn := NewSlackNotifier(srv.URL)
+	// Alert with no Patterns → should fall back to SampleLines.
+	alert := Alert{
+		Service:     "myapp",
+		Level:       "ERROR",
+		Count:       2,
+		Window:      1 * time.Minute,
+		SampleLines: []string{"error line 1", "error line 2"},
+		Timestamp:   time.Now(),
+	}
+
+	if err := sn.Send(context.Background(), alert); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &msg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks, _ := msg["blocks"].([]interface{})
+	if len(blocks) < 2 {
+		t.Fatalf("expected at least 2 blocks (header + samples), got %d", len(blocks))
+	}
+	text := blocks[1].(map[string]interface{})["text"].(map[string]interface{})["text"].(string)
+	if !contains(text, "Samples") {
+		t.Errorf("expected 'Samples' heading in fallback block, got: %s", text)
+	}
+}

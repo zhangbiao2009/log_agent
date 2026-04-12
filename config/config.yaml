@@ -11,6 +11,14 @@ aggregation:
   window: 1m
   min_count: 1
 
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
 notification:
   channels:
     - type: log

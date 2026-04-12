@@ -11,6 +11,7 @@ import (
 
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
+	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/pattern"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,6 +20,7 @@ type Config struct {
 	Loki         LokiConfig         `yaml:"loki"`
 	Aggregation  AggregationConfig  `yaml:"aggregation"`
 	Notification NotificationConfig `yaml:"notification"`
+	Pattern      PatternConfig      `yaml:"pattern"`
 }
 
 type LokiConfig struct {
@@ -38,6 +40,15 @@ type AggregationConfig struct {
 
 type NotificationConfig struct {
 	Channels []ChannelConfig `yaml:"channels"`
+}
+
+type PatternConfig struct {
+	Enabled            bool    `yaml:"enabled"`
+	Depth              int     `yaml:"depth"`
+	Similarity         float64 `yaml:"similarity"`
+	MaxChildren        int     `yaml:"max_children"`
+	MaxPatterns        int     `yaml:"max_patterns"`
+	ExtractJSONMessage bool    `yaml:"extract_json_message"`
 }
 
 type ChannelConfig struct {
@@ -150,7 +161,28 @@ func run() error {
 	}
 
 	filtered := ingest.Filter(ctx, logCh)
-	alerts := aggregator.Run(ctx, filtered)
+
+	var enriched <-chan ingest.LogLine
+	if cfg.Pattern.Enabled {
+		pe := pattern.NewPatternEngine(pattern.PatternEngineConfig{
+			Drain: pattern.DrainConfig{
+				Depth:               cfg.Pattern.Depth,
+				SimilarityThreshold: cfg.Pattern.Similarity,
+				MaxChildren:         cfg.Pattern.MaxChildren,
+				MaxPatterns:         cfg.Pattern.MaxPatterns,
+			},
+			ExtractJSONMessage: cfg.Pattern.ExtractJSONMessage,
+		})
+		enriched = pe.Run(ctx, filtered)
+		slog.Info("pattern engine enabled",
+			"depth", cfg.Pattern.Depth,
+			"similarity", cfg.Pattern.Similarity,
+		)
+	} else {
+		enriched = filtered
+	}
+
+	alerts := aggregator.Run(ctx, enriched)
 
 	for alert := range alerts {
 		if err := dispatcher.Dispatch(ctx, alert); err != nil {

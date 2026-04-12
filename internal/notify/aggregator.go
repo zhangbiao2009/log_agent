@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
@@ -31,10 +32,16 @@ type realClock struct{}
 func (realClock) Now() time.Time                        { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
+type bucketKey struct {
+	service   string
+	patternID string
+}
+
 type bucket struct {
 	count       int
 	highestRank int
 	level       string
+	template    string
 	samples     []string
 }
 
@@ -44,6 +51,9 @@ func (b *bucket) add(line ingest.LogLine) {
 	if rank > b.highestRank {
 		b.highestRank = rank
 		b.level = line.Level
+	}
+	if b.template == "" && line.PatternTemplate != "" {
+		b.template = line.PatternTemplate
 	}
 	if len(b.samples) < 5 {
 		b.samples = append(b.samples, line.Raw)
@@ -74,7 +84,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan A
 	out := make(chan Alert, 100)
 	go func() {
 		defer close(out)
-		buckets := make(map[string]*bucket)
+		buckets := make(map[bucketKey]*bucket)
 		timer := a.Clock.After(a.Window)
 		for {
 			select {
@@ -83,17 +93,18 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan A
 				return
 			case <-timer:
 				a.flush(buckets, out)
-				buckets = make(map[string]*bucket)
+				buckets = make(map[bucketKey]*bucket)
 				timer = a.Clock.After(a.Window)
 			case line, ok := <-in:
 				if !ok {
 					a.flush(buckets, out)
 					return
 				}
-				b, exists := buckets[line.Service]
+				key := bucketKey{service: line.Service, patternID: line.PatternID}
+				b, exists := buckets[key]
 				if !exists {
 					b = &bucket{}
-					buckets[line.Service] = b
+					buckets[key] = b
 				}
 				b.add(line)
 			}
@@ -102,19 +113,64 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan A
 	return out
 }
 
-func (a *Aggregator) flush(buckets map[string]*bucket, out chan<- Alert) {
+func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- Alert) {
 	now := a.Clock.Now()
-	for service, b := range buckets {
-		if b.count < a.MinCount {
-			slog.Debug("skipping alert below threshold", "service", service, "count", b.count, "min", a.MinCount)
+
+	type serviceInfo struct {
+		totalCount  int
+		highestRank int
+		level       string
+		samples     []string
+		patterns    []PatternSummary
+	}
+	serviceMap := make(map[string]*serviceInfo)
+
+	for key, b := range buckets {
+		si, exists := serviceMap[key.service]
+		if !exists {
+			si = &serviceInfo{}
+			serviceMap[key.service] = si
+		}
+		si.totalCount += b.count
+		if b.highestRank > si.highestRank {
+			si.highestRank = b.highestRank
+			si.level = b.level
+		}
+		if len(si.samples) < 5 {
+			si.samples = append(si.samples, b.samples...)
+			if len(si.samples) > 5 {
+				si.samples = si.samples[:5]
+			}
+		}
+		if key.patternID != "" {
+			psamples := b.samples
+			if len(psamples) > 3 {
+				psamples = psamples[:3]
+			}
+			si.patterns = append(si.patterns, PatternSummary{
+				Template:    b.template,
+				Count:       b.count,
+				Level:       b.level,
+				SampleLines: psamples,
+			})
+		}
+	}
+
+	for service, si := range serviceMap {
+		if si.totalCount < a.MinCount {
+			slog.Debug("skipping alert below threshold", "service", service, "count", si.totalCount, "min", a.MinCount)
 			continue
 		}
+		sort.Slice(si.patterns, func(i, j int) bool {
+			return si.patterns[i].Count > si.patterns[j].Count
+		})
 		out <- Alert{
 			Service:     service,
-			Level:       b.level,
-			Count:       b.count,
+			Level:       si.level,
+			Count:       si.totalCount,
 			Window:      a.Window,
-			SampleLines: b.samples,
+			SampleLines: si.samples,
+			Patterns:    si.patterns,
 			Timestamp:   now,
 		}
 	}

@@ -200,3 +200,87 @@ func TestAggregator_FlushOnClose(t *testing.T) {
 		t.Fatal("timeout waiting for flush-on-close alert")
 	}
 }
+
+func TestAggregator_PatternGrouping(t *testing.T) {
+	clock := testutil.NewFakeClock(time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+	agg := &Aggregator{
+		Window:   1 * time.Minute,
+		MinCount: 1,
+		Clock:    clock,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	in := make(chan ingest.LogLine, 20)
+	out := agg.Run(ctx, in)
+
+	// Two distinct patterns for the same service.
+	sendAndDrain(in, []ingest.LogLine{
+		{Service: "svc", Level: "ERROR", Raw: "timeout", PatternID: "pat1", PatternTemplate: "timeout"},
+		{Service: "svc", Level: "ERROR", Raw: "timeout", PatternID: "pat1", PatternTemplate: "timeout"},
+		{Service: "svc", Level: "WARN", Raw: "disk full", PatternID: "pat2", PatternTemplate: "disk full"},
+	})
+
+	clock.Advance(1*time.Minute + time.Millisecond)
+
+	select {
+	case a := <-out:
+		if a.Service != "svc" {
+			t.Errorf("service = %s, want svc", a.Service)
+		}
+		if a.Count != 3 {
+			t.Errorf("count = %d, want 3", a.Count)
+		}
+		if len(a.Patterns) != 2 {
+			t.Errorf("pattern count = %d, want 2", len(a.Patterns))
+		}
+		// Patterns should be sorted by count descending.
+		if a.Patterns[0].Count < a.Patterns[1].Count {
+			t.Errorf("patterns not sorted by count desc: %+v", a.Patterns)
+		}
+		// pat1 has count 2, pat2 has count 1, so pat1 should be first.
+		if a.Patterns[0].Template != "timeout" {
+			t.Errorf("first pattern template = %q, want %q", a.Patterns[0].Template, "timeout")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for alert")
+	}
+}
+
+func TestAggregator_NoPatternIDFallsBackToSamples(t *testing.T) {
+	clock := testutil.NewFakeClock(time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+	agg := &Aggregator{
+		Window:   1 * time.Minute,
+		MinCount: 1,
+		Clock:    clock,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	in := make(chan ingest.LogLine, 10)
+	out := agg.Run(ctx, in)
+
+	// Lines WITHOUT PatternID (pattern engine disabled).
+	sendAndDrain(in, []ingest.LogLine{
+		{Service: "svc", Level: "ERROR", Raw: "error line 1"},
+		{Service: "svc", Level: "ERROR", Raw: "error line 2"},
+	})
+
+	clock.Advance(1*time.Minute + time.Millisecond)
+
+	select {
+	case a := <-out:
+		// No patterns when PatternID is empty.
+		if len(a.Patterns) != 0 {
+			t.Errorf("expected no patterns for lines without PatternID, got %d", len(a.Patterns))
+		}
+		// Should have sample lines.
+		if len(a.SampleLines) == 0 {
+			t.Error("expected sample lines as fallback")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for alert")
+	}
+}

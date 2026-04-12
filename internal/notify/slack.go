@@ -66,15 +66,26 @@ func (s *SlackNotifier) formatMessage(alert Alert) slackMessage {
 	blocks := []slackBlock{
 		{Type: "section", Text: &slackText{Type: "mrkdwn", Text: header}},
 	}
-	if len(alert.SampleLines) > 0 {
+	if len(alert.Patterns) > 0 {
+		for _, p := range alert.Patterns {
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("*[%dx %s]* `%s`\n", p.Count, p.Level, slackEscape(p.Template)))
+			for _, line := range p.SampleLines {
+				sb.WriteString("• ")
+				sb.WriteString(slackEscape(line))
+				sb.WriteString("\n")
+			}
+			blocks = append(blocks, slackBlock{
+				Type: "section",
+				Text: &slackText{Type: "mrkdwn", Text: sb.String()},
+			})
+		}
+	} else if len(alert.SampleLines) > 0 {
 		var sb strings.Builder
 		sb.WriteString("*Samples:*\n")
 		for _, line := range alert.SampleLines {
-			escaped := strings.ReplaceAll(line, "&", "&amp;")
-			escaped = strings.ReplaceAll(escaped, "<", "&lt;")
-			escaped = strings.ReplaceAll(escaped, ">", "&gt;")
 			sb.WriteString("• ")
-			sb.WriteString(escaped)
+			sb.WriteString(slackEscape(line))
 			sb.WriteString("\n")
 		}
 		blocks = append(blocks, slackBlock{
@@ -83,6 +94,13 @@ func (s *SlackNotifier) formatMessage(alert Alert) slackMessage {
 		})
 	}
 	return slackMessage{Blocks: blocks}
+}
+
+func slackEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }
 
 func levelEmoji(level string) string {
