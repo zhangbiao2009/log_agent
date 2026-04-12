@@ -1,38 +1,66 @@
-# Sample log fixture for local testing without Loki.
-# Format: one JSON object per line.
+# Anomaly detection demo fixture — 4 windows.
 #
-# Two record shapes:
-#   Log line:        {"service":"...","timestamp":"...","raw":"..."}
-#   Pause sentinel:  {"pause":"6s"}
-#     Pauses the file source so the Aggregator's window timer fires and
-#     flushes. Use a pause slightly longer than aggregation.window (5s).
+# Expected output:
+#   Windows 1-3: all patterns tagged [NEW] (first time seen, EMA warming up)
+#   Window 4:
+#     notifications-processor "failed to process event" (20x) → [SPIKE z≈16.8]
+#     auth-service "JWT validation failed" (2x)               → suppressed, no alert
+#     payment-service "payment gateway timeout" (1x)          → [NEW]
 #
-# Blank lines and lines starting with '#' are ignored.
-#
-# This fixture exercises:
-#   - Pattern grouping (Drain): repeated lines collapse to one template
-#   - Multi-window: two batches separated by a {"pause":"6s"} sentinel
-#     Window 1 logs → pause → Aggregator flushes → Window 2 logs
+# Total run time: ~18s (3 × 6s pauses).
 
-# ── Window 1 ─────────────────────────────────────────────────────────────────
+# ── Window 1: baseline establishment ─────────────────────────────────────────
 {"service":"notifications-processor","timestamp":"2026-04-11T10:00:01Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-001\",\"error\":\"context deadline exceeded\"}"}
 {"service":"notifications-processor","timestamp":"2026-04-11T10:00:02Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-002\",\"error\":\"context deadline exceeded\"}"}
-{"service":"notifications-processor","timestamp":"2026-04-11T10:00:03Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-003\",\"error\":\"connection refused\"}"}
-{"service":"notifications-processor","timestamp":"2026-04-11T10:00:04Z","raw":"{\"level\":\"error\",\"msg\":\"HandleUpdateEventSubtypeCRD failed\",\"error\":\"record not found\"}"}
-{"service":"payment-service","timestamp":"2026-04-11T10:00:05Z","raw":"ERROR payment gateway timeout after 30s: stripe.com returned 502"}
-{"service":"payment-service","timestamp":"2026-04-11T10:00:06Z","raw":"ERROR payment gateway timeout after 30s: paypal.com returned 502"}
-{"service":"auth-service","timestamp":"2026-04-11T10:00:07Z","raw":"2026-04-11T10:00:07Z ERROR JWT validation failed: token expired for user user-1234"}
-{"service":"auth-service","timestamp":"2026-04-11T10:00:08Z","raw":"2026-04-11T10:00:08Z ERROR JWT validation failed: token expired for user user-5678"}
-
-# Pause longer than aggregation.window (5s) so the Aggregator flushes Window 1.
+{"service":"notifications-processor","timestamp":"2026-04-11T10:00:03Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-003\",\"error\":\"context deadline exceeded\"}"}
+{"service":"auth-service","timestamp":"2026-04-11T10:00:04Z","raw":"ERROR JWT validation failed: token expired for user user-1111"}
+{"service":"auth-service","timestamp":"2026-04-11T10:00:05Z","raw":"ERROR JWT validation failed: token expired for user user-2222"}
 {"pause":"6s"}
 
-# ── Window 2 ─────────────────────────────────────────────────────────────────
-# Same patterns as Window 1 — demonstrates that the second alert is a separate
-# window with its own counts (not cumulative).
+# ── Window 2: baseline continues ─────────────────────────────────────────────
 {"service":"notifications-processor","timestamp":"2026-04-11T10:01:01Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-011\",\"error\":\"context deadline exceeded\"}"}
 {"service":"notifications-processor","timestamp":"2026-04-11T10:01:02Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-012\",\"error\":\"context deadline exceeded\"}"}
 {"service":"notifications-processor","timestamp":"2026-04-11T10:01:03Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-013\",\"error\":\"context deadline exceeded\"}"}
 {"service":"notifications-processor","timestamp":"2026-04-11T10:01:04Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-014\",\"error\":\"context deadline exceeded\"}"}
-{"service":"notifications-processor","timestamp":"2026-04-11T10:01:05Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-015\",\"error\":\"connection refused\"}"}
-{"service":"auth-service","timestamp":"2026-04-11T10:01:06Z","raw":"2026-04-11T10:01:06Z ERROR JWT validation failed: token expired for user user-9999"}
+{"service":"auth-service","timestamp":"2026-04-11T10:01:05Z","raw":"ERROR JWT validation failed: token expired for user user-3333"}
+{"service":"auth-service","timestamp":"2026-04-11T10:01:06Z","raw":"ERROR JWT validation failed: token expired for user user-4444"}
+{"pause":"6s"}
+
+# ── Window 3: baseline complete (N=3 → min_samples met for window 4) ─────────
+{"service":"notifications-processor","timestamp":"2026-04-11T10:02:01Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-021\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:02:02Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-022\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:02:03Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-023\",\"error\":\"context deadline exceeded\"}"}
+{"service":"auth-service","timestamp":"2026-04-11T10:02:04Z","raw":"ERROR JWT validation failed: token expired for user user-5555"}
+{"service":"auth-service","timestamp":"2026-04-11T10:02:05Z","raw":"ERROR JWT validation failed: token expired for user user-6666"}
+{"pause":"6s"}
+
+# ── Window 4: anomalies ───────────────────────────────────────────────────────
+# notifications-processor SPIKE: 20 errors vs baseline mean≈3.3, stddev≈0.5
+# spike threshold = 3.3 + 3×0.5 ≈ 4.8 → 20 >> 4.8 → SPIKE (z≈16.8)
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-101\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-102\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-103\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-104\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:05Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-105\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:06Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-106\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:07Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-107\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:08Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-108\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:09Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-109\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:10Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-110\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:11Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-111\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:12Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-112\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:13Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-113\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:14Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-114\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:15Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-115\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:16Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-116\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:17Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-117\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:18Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-118\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:19Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-119\",\"error\":\"context deadline exceeded\"}"}
+{"service":"notifications-processor","timestamp":"2026-04-11T10:03:20Z","raw":"{\"level\":\"error\",\"msg\":\"failed to process event\",\"eventID\":\"evt-120\",\"error\":\"context deadline exceeded\"}"}
+
+# auth-service: same 2 errors → SUPPRESSED (AnomalyNone → no alert forwarded)
+{"service":"auth-service","timestamp":"2026-04-11T10:03:21Z","raw":"ERROR JWT validation failed: token expired for user user-7777"}
+{"service":"auth-service","timestamp":"2026-04-11T10:03:22Z","raw":"ERROR JWT validation failed: token expired for user user-8888"}
+
+# payment-service: never seen before → NEW
+{"service":"payment-service","timestamp":"2026-04-11T10:03:23Z","raw":"ERROR payment gateway timeout after 30s: stripe.com returned 502"}

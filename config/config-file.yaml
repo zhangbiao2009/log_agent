@@ -27,8 +27,8 @@ anomaly:
   spike_multiplier: 3.0
   rate_jump_factor: 5.0
   ema_alpha: 0.3
-  min_samples: 3            # lower for fixture testing (only 2 windows)
-  new_pattern_grace: 1s     # low grace so Window 2 patterns aren't all flagged New
+  min_samples: 3            # spike/rate-jump activate after 3 baseline windows
+  new_pattern_grace: 24h   # same as production; patterns only flagged New once per day
 
 notification:
   channels:
