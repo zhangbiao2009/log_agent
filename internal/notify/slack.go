@@ -69,7 +69,8 @@ func (s *SlackNotifier) formatMessage(alert Alert) slackMessage {
 	if len(alert.Patterns) > 0 {
 		for _, p := range alert.Patterns {
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("*[%dx %s]* `%s`\n", p.Count, p.Level, slackEscape(p.Template)))
+			badge := anomalyBadge(p)
+			sb.WriteString(fmt.Sprintf("%s*[%dx %s]* `%s`\n", badge, p.Count, p.Level, slackEscape(p.Template)))
 			for _, line := range p.SampleLines {
 				sb.WriteString("• ")
 				sb.WriteString(slackEscape(line))
@@ -113,5 +114,20 @@ func levelEmoji(level string) string {
 		return "\U0001F7E1"
 	default:
 		return "\u2139\uFE0F"
+	}
+}
+
+// anomalyBadge returns a Slack emoji prefix for anomalous patterns.
+// Returns an empty string for AnomalyNone (steady-state patterns).
+func anomalyBadge(p PatternSummary) string {
+	switch p.Anomaly {
+	case AnomalyNewPattern:
+		return ":new: "
+	case AnomalySpike:
+		return fmt.Sprintf(":chart_with_upward_trend: *+%.1f\u03c3* ", p.ZScore)
+	case AnomalyRateJump:
+		return fmt.Sprintf(":zap: *+%.1f\u03c3* ", p.ZScore)
+	default:
+		return ""
 	}
 }

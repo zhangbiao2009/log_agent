@@ -24,7 +24,8 @@ func (l *LogNotifier) Send(_ context.Context, alert Alert) error {
 	if len(alert.Patterns) > 0 {
 		var sb strings.Builder
 		for _, p := range alert.Patterns {
-			sb.WriteString(fmt.Sprintf("\n  [%dx %s] %s", p.Count, p.Level, p.Template))
+			tag := anomalyTag(p)
+			sb.WriteString(fmt.Sprintf("\n  [%dx %s%s] %s", p.Count, p.Level, tag, p.Template))
 		}
 		l.Logger.Info("ALERT",
 			"service", alert.Service,
@@ -52,4 +53,19 @@ func (l *LogNotifier) Send(_ context.Context, alert Alert) error {
 		"samples", samples,
 	)
 	return nil
+}
+
+// anomalyTag returns the annotation suffix for a PatternSummary, e.g. " SPIKE z=4.2".
+// Returns an empty string for AnomalyNone.
+func anomalyTag(p PatternSummary) string {
+	switch p.Anomaly {
+	case AnomalyNewPattern:
+		return " NEW"
+	case AnomalySpike:
+		return fmt.Sprintf(" SPIKE z=%.1f", p.ZScore)
+	case AnomalyRateJump:
+		return fmt.Sprintf(" RATE-JUMP z=%.1f", p.ZScore)
+	default:
+		return ""
+	}
 }

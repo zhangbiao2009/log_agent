@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/anomaly"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/notify"
 	"github.com/zhangbiao2009/agent_exercise/log_agent/internal/pattern"
@@ -22,6 +23,7 @@ type Config struct {
 	Aggregation  AggregationConfig  `yaml:"aggregation"`
 	Notification NotificationConfig `yaml:"notification"`
 	Pattern      PatternConfig      `yaml:"pattern"`
+	Anomaly      AnomalyConfig      `yaml:"anomaly"`
 }
 
 // SourceConfig selects which log source to use.
@@ -61,6 +63,15 @@ type PatternConfig struct {
 	MaxChildren        int     `yaml:"max_children"`
 	MaxPatterns        int     `yaml:"max_patterns"`
 	ExtractJSONMessage bool    `yaml:"extract_json_message"`
+}
+
+type AnomalyConfig struct {
+	Enabled         bool    `yaml:"enabled"`
+	SpikeMultiplier float64 `yaml:"spike_multiplier"`
+	RateJumpFactor  float64 `yaml:"rate_jump_factor"`
+	EMAAlpha        float64 `yaml:"ema_alpha"`
+	MinSamples      int     `yaml:"min_samples"`
+	NewPatternGrace string  `yaml:"new_pattern_grace"`
 }
 
 type ChannelConfig struct {
@@ -217,7 +228,28 @@ func run() error {
 
 	alerts := aggregator.Run(ctx, enriched)
 
-	for alert := range alerts {
+	var anomalous <-chan notify.Alert
+	if cfg.Anomaly.Enabled {
+		detector := anomaly.NewAnomalyDetector(anomaly.AnomalyConfig{
+			SpikeMultiplier: cfg.Anomaly.SpikeMultiplier,
+			RateJumpFactor:  cfg.Anomaly.RateJumpFactor,
+			EMAAlpha:        cfg.Anomaly.EMAAlpha,
+			MinSamples:      cfg.Anomaly.MinSamples,
+			NewPatternGrace: parseDuration(cfg.Anomaly.NewPatternGrace, 24*time.Hour),
+		}, anomaly.NewMemoryStore())
+		anomalous = detector.Run(ctx, alerts)
+		slog.Info("anomaly detector enabled",
+			"spike_multiplier", cfg.Anomaly.SpikeMultiplier,
+			"rate_jump_factor", cfg.Anomaly.RateJumpFactor,
+			"ema_alpha", cfg.Anomaly.EMAAlpha,
+			"min_samples", cfg.Anomaly.MinSamples,
+			"new_pattern_grace", cfg.Anomaly.NewPatternGrace,
+		)
+	} else {
+		anomalous = alerts
+	}
+
+	for alert := range anomalous {
 		if err := dispatcher.Dispatch(ctx, alert); err != nil {
 			slog.Error("dispatch failed", "err", err)
 		}

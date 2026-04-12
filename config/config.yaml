@@ -19,6 +19,14 @@ pattern:
   max_patterns: 10000
   extract_json_message: true
 
+anomaly:
+  enabled: true
+  spike_multiplier: 3.0     # alert when count > mean + 3σ
+  rate_jump_factor: 5.0     # alert when count > 5× mean
+  ema_alpha: 0.3            # EMA weight (0.1=slow adapt, 0.5=fast adapt)
+  min_samples: 5            # windows before spike/rate-jump detection activates
+  new_pattern_grace: 24h   # patterns unseen longer than this are flagged New
+
 notification:
   channels:
     - type: log
