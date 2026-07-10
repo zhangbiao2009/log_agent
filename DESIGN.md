@@ -213,7 +213,9 @@ type LogPattern struct {
 **Rolling baseline:**
 - Maintain per-pattern stats: mean and standard deviation over a 24-hour
   sliding window, bucketed into 1-minute intervals.
-- Store in an embedded DB (BadgerDB or SQLite) so baselines survive restarts.
+- Held **in-memory** today (baselines rebuild from the live stream after a
+  restart). Persisting them to a snapshot file or embedded DB (e.g. BadgerDB
+  or SQLite) to survive restarts is future work — see §5, Memory footprint.
 - Time-of-day awareness: keep separate baselines for each hour of the day
   (traffic at 3am ≠ traffic at 3pm).
 
@@ -688,7 +690,7 @@ notifications to any configured channel.
 |---|---|
 | Log processing (L1-L4) | $0 — runs on one small VM/pod |
 | LLM calls (L5) | ~$0.50-2/day — only called for genuine incidents (~5-20/day, small prompts) |
-| Storage (baselines) | Negligible — SQLite on local disk |
+| Storage (baselines) | Negligible — in-memory only (no persistence today) |
 
 The entire funnel exists to ensure L5 (the expensive LLM call) is invoked
 as rarely as possible.
