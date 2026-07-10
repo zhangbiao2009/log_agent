@@ -26,9 +26,10 @@ A Go program that continuously monitors logs from all services, detects
 anomalies, correlates errors across services, and uses an LLM to diagnose
 root causes and suggest fixes.
 
-**In one sentence:** "Service B's database is down (deployed v2.3.1 five
-minutes ago), causing timeouts in Service A and Service C. Recommend:
-rollback Service B to v2.3.0."
+**In one sentence:** "bank-gateway stopped responding 2 minutes after its
+v2.3.1 deploy, cascading into connection failures in payment-service and
+timeouts in order-service. **P1 — recommend rolling bank-gateway back to
+v2.3.0.**"
 
 ## 3. Architecture Overview
 
