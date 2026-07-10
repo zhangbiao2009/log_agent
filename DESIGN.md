@@ -441,7 +441,88 @@ Similar past incident: Q3 2025 outage (config error after deploy)
 Each `Notifier` implementation adapts this content to its channel's
 format (Slack blocks, Teams adaptive cards, HTML email, plain text SMS).
 
-## 5. Project Structure
+## 5. Performance Considerations
+
+The design is built around one idea: **do expensive work as rarely as
+possible.** Each layer is a filter that shrinks the data before it reaches the
+next, so the costly stages (LLM diagnosis, notification) only ever see a
+handful of items.
+
+### The funnel
+
+| Stage | Input rate (typical) | What it cuts | Output rate |
+|---|---|---|---|
+| L1 Filter | full log firehose | keyword filter drops non-error lines | ~10% of input |
+| L2 Pattern | error lines | Drain collapses many lines into few templates | few patterns / window |
+| L3 Anomaly | per-pattern window counts | forwards only anomalous windows | rare alerts |
+| L4 Correlator | per-service alerts | groups co-occurring alerts | few incidents |
+| L5 LLM | incidents | (no reduction — the target) | ~5–20 calls/day |
+
+By the time the expensive LLM call is reached, the stream has been reduced by
+several orders of magnitude. This is what keeps the running cost near zero.
+
+### Hot path: the Drain parser
+
+L2 is the highest-volume stage (it sees every error line), so it is the one
+that matters for CPU. Drain is deliberately cheap:
+
+- **Fixed-depth parse tree** (`Depth = 4`) — classification is `O(depth)` tree
+  descent plus a bounded token comparison, with no regex backtracking and no
+  training phase.
+- **`MaxChildren = 100`** caps fan-out per tree node so a pathological
+  high-cardinality token can't explode the tree.
+- **`MaxPatterns = 10000`** with LRU eviction bounds total pattern memory; the
+  oldest template is evicted once the cap is hit.
+
+### Concurrency and throughput
+
+- **Per-service fan-out (L1–L3)** turns the Drain-heavy path into real CPU
+  parallelism: N services → N independent pipelines, each with its own Drain
+  tree, window timer, and baseline store (no locks, no cross-service
+  contention). See §3, Concurrency Model.
+- **Pipeline overlap** — bounded channel buffers (sized to `cap(in)`) let each
+  stage work on window *N+1* while its downstream neighbor is still handling
+  window *N*.
+- **Cheap fan-in** — `MergeAlerts` merges low-volume `Alert`s (a few per
+  window), never raw log lines, so the single synchronization point between the
+  two zones is negligible.
+
+### Memory footprint
+
+- Everything is **in-memory**; there is no database on the hot path.
+- Memory grows **linearly with service count**: N Drain trees + N baseline
+  stores, each Drain tree bounded by `MaxPatterns` and each baseline a small
+  fixed-size struct per pattern. For a few dozen services this is a few tens of
+  MB.
+- **No persistence** — baselines rebuild from the live stream after a restart,
+  trading a short warm-up for operational simplicity.
+
+### External calls and blocking
+
+- **Loki polling** is pull-based on a configurable `poll_interval`; this bounds
+  both source pressure and Loki API load. Too-frequent polling risks API rate
+  limits, so it is a deliberate knob rather than a busy loop.
+- **LLM diagnosis (L5)** is a synchronous HTTP call inside the pipeline with a
+  **30 s client timeout**. Because it sits behind the whole funnel it is reached
+  only for genuine incidents, and failures degrade gracefully (heuristic
+  fallback, `slog.Warn`) instead of stalling the pipeline.
+- **Backpressure** is natural: bounded channels slow upstream stages when a
+  downstream stage lags, and `ctx` cancellation propagates from the source to
+  unwind every goroutine cleanly.
+
+### Tuning knobs
+
+| Knob | Effect | Trade-off |
+|---|---|---|
+| `source.loki.poll_interval` | how often each source polls Loki | freshness vs. API load |
+| aggregation window | L2/L3 batching granularity | detection latency vs. noise |
+| `correlator.window` (default 2 min) | how long alerts are buffered for grouping | incident completeness vs. latency |
+| `pattern.max_patterns` / `depth` | Drain memory and specificity | accuracy vs. footprint |
+| anomaly thresholds (σ / multiplier) | how eagerly alerts fire | sensitivity vs. false positives |
+| dedup window / `resolve_after` | notification chattiness | signal vs. alert fatigue |
+| `diagnosis.timeout` | LLM call budget | reliability vs. tail latency |
+
+## 6. Project Structure
 
 ```
 log_agent/
@@ -513,7 +594,7 @@ log_agent/
 └── go.mod
 ```
 
-## 6. Phased Roadmap
+## 7. Phased Roadmap
 
 ### Phase 1: Error Catcher ✅
 
@@ -589,7 +670,7 @@ notifications to any configured channel.
 
 **Value:** Institutional knowledge is automatically surfaced during incidents.
 
-## 7. Key Design Decisions
+## 8. Key Design Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
@@ -601,7 +682,7 @@ notifications to any configured channel.
 | Persistence | In-memory (baselines) | Lightweight; baselines rebuild on restart. |
 | Notification | Pluggable `Notifier` interface | Slack, Teams, Email, Log implemented. Add SMS/PagerDuty by implementing the interface. |
 
-## 8. Cost Estimate
+## 9. Cost Estimate
 
 | Component | Cost |
 |---|---|
@@ -612,7 +693,7 @@ notifications to any configured channel.
 The entire funnel exists to ensure L5 (the expensive LLM call) is invoked
 as rarely as possible.
 
-## 9. Future Enhancements
+## 10. Future Enhancements
 
 - **Auto-remediation:** For known incident types, automatically trigger
   runbooks (e.g., rollback, restart, scale up).
