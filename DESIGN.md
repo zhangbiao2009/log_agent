@@ -36,21 +36,29 @@ The agent runs an **independent pipeline per service** for the per-service
 stages (L1–L3), then **fans in** to shared cross-service stages (L4–L6):
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph PS["Per-service zone — N concurrent pipelines"]
-        direction TB
-        A["svc-a: Source → Filter → Pattern → Aggregate → Anomaly"]
-        B["svc-b: Source → Filter → Pattern → Aggregate → Anomaly"]
-        C["svc-c: Source → Filter → Pattern → Aggregate → Anomaly"]
+        subgraph SA["svc-a"]
+            direction LR
+            A1["Source"] --> A2["Filter"] --> A3["Pattern"] --> A4["Aggregate"] --> A5["Anomaly"]
+        end
+        subgraph SB["svc-b"]
+            direction LR
+            B1["Source"] --> B2["Filter"] --> B3["Pattern"] --> B4["Aggregate"] --> B5["Anomaly"]
+        end
+        subgraph SC["svc-c"]
+            direction LR
+            C1["Source"] --> C2["Filter"] --> C3["Pattern"] --> C4["Aggregate"] --> C5["Anomaly"]
+        end
     end
-    M(["MergeAlerts<br/>(fan-in)"])
+    M(["MergeAlerts (fan-in)"])
     subgraph SH["Shared zone — single pipeline"]
         direction LR
         D["Correlator"] --> E["LLM Diagnosis"] --> F["Notify + Dedup"] --> G["Dispatch"]
     end
-    A -->|chan Alert| M
-    B -->|chan Alert| M
-    C -->|chan Alert| M
+    A5 -->|chan Alert| M
+    B5 -->|chan Alert| M
+    C5 -->|chan Alert| M
     M -->|chan Alert| D
 ```
 
