@@ -1,0 +1,31 @@
+# Demo fixture — bank-gateway (per-service file; service name from config).
+# Root cause of the cascade: 4 windows, 3 baseline then a large spike.
+
+# ── Window 1: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:00:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"timestamp":"2026-04-12T10:00:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 2: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:01:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"timestamp":"2026-04-12T10:01:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 3: baseline complete ──────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:02:05Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"timestamp":"2026-04-12T10:02:06Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"i/o timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 4: SPIKE — bank-gateway down (root cause) ─────────────────────────
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}

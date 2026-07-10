@@ -1,11 +1,23 @@
-loki:
-  url: "http://localhost:3000/api/datasources/proxy/uid/loki-infra-logging-us-dev-5-001"
-  query: '{container="notifications-processor"}'
-  poll_interval: 30s
-  tenant_id: ""           # Not needed when going through Grafana proxy
-  service_label: "app"    # Extract service name from "app" label
-  basic_auth_user: "root"
-  basic_auth_password: "${GRAFANA_PASSWORD}"
+source:
+  type: loki
+  loki:
+    url: "http://localhost:3000/api/datasources/proxy/uid/loki-infra-logging-us-dev-5-001"
+    poll_interval: 30s
+    tenant_id: ""           # Not needed when going through Grafana proxy
+    service_label: "app"    # Extract service name from "app" label
+    basic_auth_user: "root"
+    basic_auth_password: "${GRAFANA_PASSWORD}"
+
+# Each service gets its own independent pipeline (source → filter → pattern →
+# aggregate → anomaly), running concurrently. Alerts fan in before the
+# cross-service correlator.
+services:
+  - name: notifications-processor
+    query: '{container="notifications-processor"}'
+  - name: auth-service
+    query: '{app="auth-service"}'
+  - name: payment-service
+    query: '{app="payment-service"}'
 
 aggregation:
   window: 1m

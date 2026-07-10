@@ -16,6 +16,11 @@ type FileConfig struct {
 	// fields: service (string), timestamp (RFC3339, optional), raw (string).
 	// level is optional; if absent the Filter stage infers it from raw text.
 	Path string
+
+	// Service, when non-empty, overrides the per-line "service" field in the
+	// NDJSON file. Used in the per-service pipeline model where each file
+	// belongs to exactly one service, so the file lines can omit "service".
+	Service string
 }
 
 // fileRecord is the JSON shape of each line in the NDJSON fixture file.
@@ -102,8 +107,13 @@ func (s *FileSource) Stream(ctx context.Context) (<-chan LogLine, error) {
 				}
 			}
 
+			service := rec.Service
+			if s.cfg.Service != "" {
+				service = s.cfg.Service
+			}
+
 			out <- LogLine{
-				Service:   rec.Service,
+				Service:   service,
 				Timestamp: ts,
 				Level:     rec.Level,
 				Raw:       rec.Raw,

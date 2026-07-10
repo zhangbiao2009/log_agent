@@ -6,8 +6,14 @@
 
 source:
   type: file
-  file:
-    path: testdata/sample_logs.ndjson
+
+services:
+  - name: order-service
+    path: testdata/demo/order-service.ndjson
+  - name: payment-service
+    path: testdata/demo/payment-service.ndjson
+  - name: bank-gateway
+    path: testdata/demo/bank-gateway.ndjson
 
 aggregation:
   window: 5s    # short window so all fixture lines land in one pass

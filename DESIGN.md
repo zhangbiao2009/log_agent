@@ -32,6 +32,23 @@ rollback Service B to v2.3.0."
 
 ## 3. Architecture Overview
 
+The agent runs an **independent pipeline per service** for the per-service
+stages (L1–L3), then **fans in** to shared cross-service stages (L4–L6):
+
+```
+   ┌──────────────────── PER-SERVICE ZONE (N concurrent pipelines) ─────────────────────┐
+   │  svc-a: Source → Filter → Pattern → Aggregate → Anomaly ─┐                          │
+   │  svc-b: Source → Filter → Pattern → Aggregate → Anomaly ─┼─► MergeAlerts (fan-in)   │
+   │  svc-c: Source → Filter → Pattern → Aggregate → Anomaly ─┘         │                │
+   └───────────────────────────────────────────────────────────────────┼────────────────┘
+                                                                        │
+                              ┌──────────────── SHARED ZONE ────────────▼────────────────┐
+                              │  Correlator → LLM Diagnosis → Notify + Dedup → Dispatch   │
+                              └───────────────────────────────────────────────────────────┘
+```
+
+Per-service pipeline detail (repeated once per service):
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Log Sources                             │
@@ -69,6 +86,40 @@ rollback Service B to v2.3.0."
                └─────────────────┘
 ```
 
+### Concurrency Model
+
+Every stage is a channel-based goroutine (`Run(ctx, in) -> out`). Concurrency
+comes from two places:
+
+1. **Per-service fan-out (L1–L3).** For each entry in `services:`, the agent
+   spins up a full `Source → Filter → Pattern → Aggregate → Anomaly` chain.
+   These pipelines run fully in parallel and share no state:
+   - each service has its **own Drain tree** (no lock contention, no
+     cross-service pattern bleed),
+   - its **own aggregation window timer**, and
+   - its **own anomaly baseline store**.
+   A slow or failing source for one service never blocks the others.
+
+2. **Pipeline parallelism.** Within a pipeline, each stage runs concurrently
+   with its neighbors, bounded by channel buffer sizes — while the Aggregator
+   summarizes window *N*, the Filter is already processing window *N+1*.
+
+**Fan-in.** `notify.MergeAlerts` merges the N per-service `Alert` channels into
+one before the Correlator. This is the single synchronization point between the
+two zones. It merges low-volume `Alert`s (a few per window), not raw log lines,
+so the merge is cheap. Ordering across services is not guaranteed; the
+Correlator regroups by time window, so interleaving is expected.
+
+**Why L4–L6 are single instances.** The Correlator must observe *all* services
+to group co-occurring anomalies via the dependency graph; the Diagnoser and
+Lifecycle manager operate on whole incidents that may span services. These are
+inherently global and stay singular.
+
+**Trade-off.** Memory grows linearly with service count (N Drain trees + N
+baseline stores), bounded per service by `pattern.max_patterns`. For a few
+dozen services this is negligible; the win is real CPU parallelism for the
+Drain-heavy path and failure isolation between services.
+
 ## 4. Layer-by-Layer Design
 
 ### L1: Ingest + Fast Filter
@@ -82,21 +133,29 @@ rollback Service B to v2.3.0."
 - Support multiple log sources via an interface:
   ```go
   type LogSource interface {
-      // Stream returns a channel of log lines from the given service.
-      Stream(ctx context.Context, service string) (<-chan LogLine, error)
+      // Stream returns a channel of log lines. Each source instance targets
+      // exactly one service (via its Loki query or file path); the service
+      // name is stamped onto every LogLine it emits.
+      Stream(ctx context.Context) (<-chan LogLine, error)
   }
   ```
-- Implementations: `LokiSource` (query Loki HTTP API), `FileSource` (tail files),
-  `KafkaSource` (consume from topic). Start with Loki since we already use it.
+- Implementations: `LokiSource` (query Loki HTTP API), `FileSource` (replay an
+  NDJSON file). `KafkaSource` is a future addition. Start with Loki since we
+  already use it.
+- **One source instance per service.** The agent builds an independent pipeline
+  for every entry in the `services:` config list, so each service is polled and
+  processed concurrently (see §3, Concurrency Model).
 - Fast filter is just string matching: skip lines that don't contain
   `ERROR`, `FATAL`, `WARN`, or `panic`.
 - Each `LogLine` carries metadata:
   ```go
   type LogLine struct {
-      Service   string
-      Timestamp time.Time
-      Level     string    // ERROR, FATAL, WARN
-      Raw       string    // original log text
+      Service         string
+      Timestamp       time.Time
+      Level           string    // ERROR, FATAL, WARN, or "" if unknown
+      Raw             string    // original log text
+      PatternID       string    // set by L2 (Pattern Fingerprint)
+      PatternTemplate string    // human-readable template (set alongside PatternID)
   }
   ```
 
@@ -414,8 +473,9 @@ log_agent/
 ├── docs/
 │   └── phase6-notify-dedup-*.md       ← Phase 6 design & test plan
 ├── config/
-│   ├── config.yaml                    ← default Loki config
+│   ├── config.yaml                    ← default Loki config (per-service list)
 │   ├── config-file.yaml               ← local file-source testing
+│   ├── config-demo.yaml               ← per-service fan-out/fan-in demo
 │   ├── config-correlator.yaml         ← correlator demo
 │   ├── config-diagnosis.yaml          ← diagnosis demo (DeepSeek)
 │   ├── config-email.yaml              ← email notification demo (Gmail SMTP)
@@ -456,6 +516,7 @@ log_agent/
 │   │   ├── incident.go                ← Incident struct, status types, ID generation
 │   │   ├── lifecycle.go               ← LifecycleManager (OPEN→ONGOING→RESOLVED, dedup)
 │   │   ├── aggregator.go              ← time-window alert aggregation
+│   │   ├── merge.go                   ← MergeAlerts fan-in of per-service pipelines
 │   │   ├── slack.go                   ← Slack Block Kit webhook
 │   │   ├── teams.go                   ← Microsoft Teams Adaptive Card webhook
 │   │   ├── email.go                   ← SMTP email (HTML template)

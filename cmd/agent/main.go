@@ -20,8 +20,8 @@ import (
 
 // Config is the top-level configuration.
 type Config struct {
-	Loki         LokiConfig         `yaml:"loki"`
 	Source       SourceConfig       `yaml:"source"`
+	Services     []ServiceConfig    `yaml:"services"`
 	Aggregation  AggregationConfig  `yaml:"aggregation"`
 	Notification NotificationConfig `yaml:"notification"`
 	Pattern      PatternConfig      `yaml:"pattern"`
@@ -30,25 +30,31 @@ type Config struct {
 	Diagnosis    DiagnosisConfig    `yaml:"diagnosis"`
 }
 
-// SourceConfig selects which log source to use.
-// type: "loki" (default) or "file" (for local testing without Loki).
+// SourceConfig selects the source type and shared connection settings.
+// Each entry in the top-level Services list becomes an independent pipeline.
 type SourceConfig struct {
-	Type string     `yaml:"type"` // "loki" | "file"
-	File FileSource `yaml:"file"`
+	Type string   `yaml:"type"` // "loki" | "file"
+	Loki LokiConn `yaml:"loki"` // shared Loki connection (type == "loki")
 }
 
-type FileSource struct {
-	Path string `yaml:"path"`
-}
-
-type LokiConfig struct {
+// LokiConn holds the Loki connection settings shared by every service. The
+// per-service LogQL selector lives in ServiceConfig.Query.
+type LokiConn struct {
 	URL               string `yaml:"url"`
-	Query             string `yaml:"query"`
 	PollInterval      string `yaml:"poll_interval"`
 	TenantID          string `yaml:"tenant_id"`
 	ServiceLabel      string `yaml:"service_label"`
 	BasicAuthUser     string `yaml:"basic_auth_user"`
 	BasicAuthPassword string `yaml:"basic_auth_password"`
+}
+
+// ServiceConfig defines one monitored service. It gets its own end-to-end
+// pipeline (source → filter → pattern → aggregate → anomaly). Depending on
+// Source.Type, either Query (loki) or Path (file) is used.
+type ServiceConfig struct {
+	Name  string `yaml:"name"`
+	Query string `yaml:"query"` // LogQL selector, used when source.type == "loki"
+	Path  string `yaml:"path"`  // NDJSON file, used when source.type == "file"
 }
 
 type AggregationConfig struct {
@@ -184,32 +190,87 @@ func buildNotifiers(cfg NotificationConfig) []notify.NotifierRoute {
 	return routes
 }
 
-func buildSource(cfg *Config) (ingest.LogSource, error) {
+// buildSource creates a LogSource for a single service based on the global
+// source type and the service's per-service selector (Query for loki, Path
+// for file). The service name is forced onto every emitted line so downstream
+// keying is correct regardless of label content.
+func buildSource(cfg *Config, svc ServiceConfig) (ingest.LogSource, error) {
 	sourceType := cfg.Source.Type
 	if sourceType == "" {
-		sourceType = "loki" // default for backward compatibility
+		sourceType = "loki"
 	}
 	switch sourceType {
 	case "loki":
+		if svc.Query == "" {
+			return nil, fmt.Errorf("service %q: query must be set when source.type is \"loki\"", svc.Name)
+		}
 		return ingest.NewLokiSource(ingest.LokiConfig{
-			URL:               cfg.Loki.URL,
-			Query:             cfg.Loki.Query,
-			PollInterval:      parseDuration(cfg.Loki.PollInterval, 10*time.Second),
-			TenantID:          cfg.Loki.TenantID,
-			ServiceLabel:      cfg.Loki.ServiceLabel,
-			BasicAuthUser:     cfg.Loki.BasicAuthUser,
-			BasicAuthPassword: cfg.Loki.BasicAuthPassword,
+			URL:               cfg.Source.Loki.URL,
+			Query:             svc.Query,
+			PollInterval:      parseDuration(cfg.Source.Loki.PollInterval, 10*time.Second),
+			TenantID:          cfg.Source.Loki.TenantID,
+			ServiceLabel:      cfg.Source.Loki.ServiceLabel,
+			BasicAuthUser:     cfg.Source.Loki.BasicAuthUser,
+			BasicAuthPassword: cfg.Source.Loki.BasicAuthPassword,
+			Service:           svc.Name,
 		}), nil
 	case "file":
-		path := cfg.Source.File.Path
-		if path == "" {
-			return nil, fmt.Errorf("source.file.path must be set when source.type is \"file\"")
+		if svc.Path == "" {
+			return nil, fmt.Errorf("service %q: path must be set when source.type is \"file\"", svc.Name)
 		}
-		slog.Info("using file source", "path", path)
-		return ingest.NewFileSource(ingest.FileConfig{Path: path}), nil
+		slog.Info("using file source", "service", svc.Name, "path", svc.Path)
+		return ingest.NewFileSource(ingest.FileConfig{Path: svc.Path, Service: svc.Name}), nil
 	default:
 		return nil, fmt.Errorf("unknown source type %q (must be \"loki\" or \"file\")", sourceType)
 	}
+}
+
+// buildServicePipeline wires the per-service zone for one service:
+// source → filter → pattern → aggregate → anomaly, returning the service's
+// Alert channel. All stages run in their own goroutines with state isolated
+// to this service (own Drain tree, own aggregation window, own baselines).
+func buildServicePipeline(ctx context.Context, cfg *Config, svc ServiceConfig, window time.Duration, minCount int) (<-chan notify.Alert, error) {
+	source, err := buildSource(cfg, svc)
+	if err != nil {
+		return nil, err
+	}
+
+	logCh, err := source.Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("service %q: start source: %w", svc.Name, err)
+	}
+
+	filtered := ingest.Filter(ctx, logCh)
+
+	enriched := filtered
+	if cfg.Pattern.Enabled {
+		pe := pattern.NewPatternEngine(pattern.PatternEngineConfig{
+			Drain: pattern.DrainConfig{
+				Depth:               cfg.Pattern.Depth,
+				SimilarityThreshold: cfg.Pattern.Similarity,
+				MaxChildren:         cfg.Pattern.MaxChildren,
+				MaxPatterns:         cfg.Pattern.MaxPatterns,
+			},
+			ExtractJSONMessage: cfg.Pattern.ExtractJSONMessage,
+		})
+		enriched = pe.Run(ctx, filtered)
+	}
+
+	alerts := notify.NewAggregator(window, minCount).Run(ctx, enriched)
+
+	anomalous := alerts
+	if cfg.Anomaly.Enabled {
+		detector := anomaly.NewAnomalyDetector(anomaly.AnomalyConfig{
+			SpikeMultiplier: cfg.Anomaly.SpikeMultiplier,
+			RateJumpFactor:  cfg.Anomaly.RateJumpFactor,
+			EMAAlpha:        cfg.Anomaly.EMAAlpha,
+			MinSamples:      cfg.Anomaly.MinSamples,
+			NewPatternGrace: parseDuration(cfg.Anomaly.NewPatternGrace, 24*time.Hour),
+		}, anomaly.NewMemoryStore())
+		anomalous = detector.Run(ctx, alerts)
+	}
+
+	return anomalous, nil
 }
 
 func run() error {
@@ -229,10 +290,8 @@ func run() error {
 		minCount = 1
 	}
 
-	// Build pipeline components.
-	source, err := buildSource(cfg)
-	if err != nil {
-		return fmt.Errorf("build source: %w", err)
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("no services configured; add at least one entry under \"services\"")
 	}
 
 	routes := buildNotifiers(cfg.Notification)
@@ -242,67 +301,50 @@ func run() error {
 	}
 	dispatcher := notify.NewRoutedDispatcher(routes)
 
-	aggregator := notify.NewAggregator(window, minCount)
-
 	// Wire pipeline with graceful shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	sourceType := cfg.Source.Type
+	if sourceType == "" {
+		sourceType = "loki"
+	}
 	slog.Info("starting log agent",
-		"source", cfg.Source.Type,
+		"source", sourceType,
+		"services", len(cfg.Services),
 		"window", window,
 		"min_count", minCount,
 	)
 
-	logCh, err := source.Stream(ctx)
-	if err != nil {
-		return fmt.Errorf("start log source: %w", err)
+	// Fan-out: one independent pipeline per service (source → filter →
+	// pattern → aggregate → anomaly), each producing an Alert channel.
+	alertChans := make([]<-chan notify.Alert, 0, len(cfg.Services))
+	for _, svc := range cfg.Services {
+		if svc.Name == "" {
+			return fmt.Errorf("every service entry must have a name")
+		}
+		ch, err := buildServicePipeline(ctx, cfg, svc, window, minCount)
+		if err != nil {
+			return fmt.Errorf("build pipeline: %w", err)
+		}
+		slog.Info("service pipeline started", "service", svc.Name)
+		alertChans = append(alertChans, ch)
 	}
-
-	filtered := ingest.Filter(ctx, logCh)
-
-	var enriched <-chan ingest.LogLine
 	if cfg.Pattern.Enabled {
-		pe := pattern.NewPatternEngine(pattern.PatternEngineConfig{
-			Drain: pattern.DrainConfig{
-				Depth:               cfg.Pattern.Depth,
-				SimilarityThreshold: cfg.Pattern.Similarity,
-				MaxChildren:         cfg.Pattern.MaxChildren,
-				MaxPatterns:         cfg.Pattern.MaxPatterns,
-			},
-			ExtractJSONMessage: cfg.Pattern.ExtractJSONMessage,
-		})
-		enriched = pe.Run(ctx, filtered)
-		slog.Info("pattern engine enabled",
-			"depth", cfg.Pattern.Depth,
-			"similarity", cfg.Pattern.Similarity,
-		)
-	} else {
-		enriched = filtered
+		slog.Info("pattern engine enabled", "depth", cfg.Pattern.Depth, "similarity", cfg.Pattern.Similarity)
 	}
-
-	alerts := aggregator.Run(ctx, enriched)
-
-	var anomalous <-chan notify.Alert
 	if cfg.Anomaly.Enabled {
-		detector := anomaly.NewAnomalyDetector(anomaly.AnomalyConfig{
-			SpikeMultiplier: cfg.Anomaly.SpikeMultiplier,
-			RateJumpFactor:  cfg.Anomaly.RateJumpFactor,
-			EMAAlpha:        cfg.Anomaly.EMAAlpha,
-			MinSamples:      cfg.Anomaly.MinSamples,
-			NewPatternGrace: parseDuration(cfg.Anomaly.NewPatternGrace, 24*time.Hour),
-		}, anomaly.NewMemoryStore())
-		anomalous = detector.Run(ctx, alerts)
 		slog.Info("anomaly detector enabled",
 			"spike_multiplier", cfg.Anomaly.SpikeMultiplier,
 			"rate_jump_factor", cfg.Anomaly.RateJumpFactor,
 			"ema_alpha", cfg.Anomaly.EMAAlpha,
 			"min_samples", cfg.Anomaly.MinSamples,
-			"new_pattern_grace", cfg.Anomaly.NewPatternGrace,
 		)
-	} else {
-		anomalous = alerts
 	}
+
+	// Fan-in: merge all per-service Alert channels into one before the
+	// shared cross-service stages.
+	anomalous := notify.MergeAlerts(ctx, alertChans...)
 
 	// Stage 5: Correlator (or bypass).
 	var incidents <-chan notify.Incident

@@ -72,7 +72,7 @@ func TestParseLokiResponse_Basic(t *testing.T) {
 		{"myapp", ts, `{"level":"error","msg":"bad"}`},
 		{"myapp", ts + 1, `another line`},
 	})
-	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "")
+	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestParseLokiResponse_ServiceFallback(t *testing.T) {
 		{"stream":{"job":"batch"},"values":[["3000","line3"]]},
 		{"stream":{"namespace":"prod"},"values":[["4000","line4"]]}
 	]}}`
-	lines, _, err := parseLokiResponse(strings.NewReader(resp), "")
+	lines, _, err := parseLokiResponse(strings.NewReader(resp), "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParseLokiResponse_ServiceFallback(t *testing.T) {
 
 func TestParseLokiResponse_Empty(t *testing.T) {
 	body := `{"status":"success","data":{"resultType":"streams","result":[]}}`
-	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "")
+	lines, maxTS, err := parseLokiResponse(strings.NewReader(body), "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestParseLokiResponse_CustomServiceLabel(t *testing.T) {
 	]}}`
 
 	// With custom service label "service_name"
-	lines, _, err := parseLokiResponse(strings.NewReader(resp), "service_name")
+	lines, _, err := parseLokiResponse(strings.NewReader(resp), "service_name", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,12 +141,30 @@ func TestParseLokiResponse_CustomServiceLabel(t *testing.T) {
 	}
 
 	// With custom label "containerId"
-	lines2, _, err := parseLokiResponse(strings.NewReader(resp), "containerId")
+	lines2, _, err := parseLokiResponse(strings.NewReader(resp), "containerId", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if lines2[0].Service != "host/k3s.service" {
 		t.Errorf("line 0: service = %q, want %q", lines2[0].Service, "host/k3s.service")
+	}
+}
+
+func TestParseLokiResponse_ServiceOverride(t *testing.T) {
+	// serviceOverride forces the service name regardless of labels — the
+	// per-service pipeline model where each source targets one service.
+	resp := `{"status":"success","data":{"resultType":"streams","result":[
+		{"stream":{"app":"frontend"},"values":[["1000","line1"]]},
+		{"stream":{"app":"backend"},"values":[["2000","line2"]]}
+	]}}`
+	lines, _, err := parseLokiResponse(strings.NewReader(resp), "app", "payment-service")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i, line := range lines {
+		if line.Service != "payment-service" {
+			t.Errorf("line %d: service = %q, want %q (override)", i, line.Service, "payment-service")
+		}
 	}
 }
 

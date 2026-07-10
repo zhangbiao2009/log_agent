@@ -106,6 +106,6 @@ func BenchmarkParseLokiResponse(b *testing.B) {
 	b.SetBytes(int64(len(body)))
 	for b.Loop() {
 		r := strings.NewReader(body)
-		parseLokiResponse(r, "")
+		parseLokiResponse(r, "", "")
 	}
 }

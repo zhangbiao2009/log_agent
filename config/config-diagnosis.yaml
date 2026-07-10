@@ -7,8 +7,14 @@
 
 source:
   type: file
-  file:
-    path: testdata/correlator_demo.ndjson
+
+services:
+  - name: order-service
+    path: testdata/demo/order-service.ndjson
+  - name: payment-service
+    path: testdata/demo/payment-service.ndjson
+  - name: bank-gateway
+    path: testdata/demo/bank-gateway.ndjson
 
 aggregation:
   window: 5s

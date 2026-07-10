@@ -1,0 +1,71 @@
+# Per-service pipeline demo (file source).
+#
+# Demonstrates the fan-out / fan-in architecture: three services each get an
+# independent, concurrent pipeline (source → filter → pattern → aggregate →
+# anomaly). Their alerts fan in to a single cross-service correlator.
+#
+# Scenario (per config/dependencies.yaml):
+#   bank-gateway goes down → payment-service fails → order-service fails.
+#   All three spike in the same window and are grouped into ONE incident with
+#   bank-gateway (deepest in the dependency chain) as the root cause.
+#
+# Usage:
+#   cd log_agent && go run ./cmd/agent/ config/config-demo.yaml
+#
+# What to look for in the output:
+#   - "service pipeline started" logged 3× (one per service, concurrent)
+#   - Windows 1-3: patterns flagged [NEW] while baselines warm up
+#   - Window 4: [SPIKE] on all three services
+#   - A single incident: root cause bank-gateway, chain
+#     bank-gateway → payment-service → order-service
+#
+# Total run time: ~25s (4 windows × ~6s pauses).
+
+source:
+  type: file
+  # No shared connection block needed for file mode; each service names its file.
+
+services:
+  - name: order-service
+    path: testdata/demo/order-service.ndjson
+  - name: payment-service
+    path: testdata/demo/payment-service.ndjson
+  - name: bank-gateway
+    path: testdata/demo/bank-gateway.ndjson
+
+aggregation:
+  window: 5s        # short window so each burst lands in one pass
+  min_count: 1
+
+pattern:
+  enabled: true
+  depth: 4
+  similarity: 0.5
+  max_children: 100
+  max_patterns: 10000
+  extract_json_message: true
+
+anomaly:
+  enabled: true
+  spike_multiplier: 3.0
+  rate_jump_factor: 5.0
+  ema_alpha: 0.3
+  min_samples: 3            # spike/rate-jump activate after 3 baseline windows
+  new_pattern_grace: 24h
+
+correlator:
+  enabled: true
+  window: 5s
+  dependencies_file: config/dependencies.yaml
+
+# LLM diagnosis is off by default so the demo runs with no API key.
+# To enable: set diagnosis.enabled: true and export LLM_API_KEY.
+diagnosis:
+  enabled: false
+
+notification:
+  dedup_window: 30s
+  resolve_after: 1m
+  check_interval: 10s
+  channels:
+    - type: log

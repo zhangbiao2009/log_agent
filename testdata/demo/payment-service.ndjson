@@ -1,0 +1,27 @@
+# Demo fixture — payment-service (per-service file; service name from config).
+# 4 windows: 3 baseline (~2 errors each) then a spike.
+
+# ── Window 1: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:00:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-001\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:00:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-002\",\"error\":\"connection refused\"}"}
+{"pause":"6s"}
+
+# ── Window 2: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:01:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-011\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:01:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-012\",\"error\":\"connection refused\"}"}
+{"pause":"6s"}
+
+# ── Window 3: baseline complete ──────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:02:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-021\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:02:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-022\",\"error\":\"connection refused\"}"}
+{"pause":"6s"}
+
+# ── Window 4: SPIKE — downstream bank-gateway is down ────────────────────────
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-031\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-032\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-033\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-034\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-035\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-036\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-037\",\"error\":\"connection refused\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-038\",\"error\":\"connection refused\"}"}

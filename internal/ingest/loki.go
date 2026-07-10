@@ -20,6 +20,11 @@ type LokiConfig struct {
 	ServiceLabel      string        `yaml:"service_label"`
 	BasicAuthUser     string        `yaml:"basic_auth_user"`
 	BasicAuthPassword string        `yaml:"basic_auth_password"`
+
+	// Service, when non-empty, forces the service name for every line this
+	// source emits, bypassing label extraction. Used in the per-service
+	// pipeline model where each source targets a single service via Query.
+	Service string `yaml:"service"`
 }
 
 type LokiSource struct {
@@ -158,7 +163,7 @@ func (s *LokiSource) fetchLogs(ctx context.Context, start, end time.Time) ([]Log
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, time.Time{}, fmt.Errorf("loki returned %d: %s", resp.StatusCode, string(body))
 	}
-	return parseLokiResponse(resp.Body, s.config.ServiceLabel)
+	return parseLokiResponse(resp.Body, s.config.ServiceLabel, s.config.Service)
 }
 
 // extractService picks the service name from stream labels.
@@ -179,7 +184,7 @@ func extractService(labels map[string]string, serviceLabel string) string {
 	return "unknown"
 }
 
-func parseLokiResponse(r io.Reader, serviceLabel string) ([]LogLine, time.Time, error) {
+func parseLokiResponse(r io.Reader, serviceLabel string, serviceOverride string) ([]LogLine, time.Time, error) {
 	// PERF: This function is the single largest allocation site (~5k allocs
 	// per 1000-line response). Three improvements to consider:
 	//   1. Pre-allocate the lines slice: estimate capacity from Content-Length
@@ -197,6 +202,9 @@ func parseLokiResponse(r io.Reader, serviceLabel string) ([]LogLine, time.Time, 
 	var maxTS time.Time
 	for _, stream := range resp.Data.Result {
 		service := extractService(stream.Stream, serviceLabel)
+		if serviceOverride != "" {
+			service = serviceOverride
+		}
 
 		for _, val := range stream.Values {
 			if len(val) < 2 {

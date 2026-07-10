@@ -4,13 +4,26 @@ An intelligent log monitoring agent that tails logs from [Grafana Loki](https://
 
 ## Architecture
 
+One independent pipeline per service (L1–L3) fans in to shared cross-service
+stages (L4–L6):
+
 ```
-Loki / File ──▶ Filter ──▶ PatternEngine ──▶ Anomaly ──▶ Correlator ──▶ Diagnoser ──▶ Lifecycle ──▶ Dispatcher
- (L1)           (WARN+)     (Drain)          Detector    (dep graph)    (LLM)        Manager       ──▶ Slack
-                                             (spike/     (group into    (root cause   (dedup/       ──▶ Teams
-                                              new/rate)   incidents)    + severity)    resolve)     ──▶ Email
-                                                                                                   ──▶ Log
+ svc-a: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┐
+ svc-b: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┤
+ svc-c: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┘
+   (L1)             (WARN+)    (Drain)          (window)     (spike/     │
+                                                             new/rate)   │
+                                                        MergeAlerts (fan-in)
+                                                                         │
+   Correlator ─▶ Diagnoser ─▶ Lifecycle ─▶ Dispatcher ──▶ Slack / Teams / Email / Log
+   (L4, dep      (L5, LLM     (L6, dedup/
+    graph)        root cause)  resolve)
 ```
+
+Each per-service pipeline runs concurrently with its own Drain tree, aggregation
+window, and anomaly baselines — so services are processed in parallel and a slow
+or failing source for one never blocks the others. See DESIGN.md § Concurrency
+Model for details.
 
 | Stage | Package | Purpose |
 |---|---|---|
@@ -35,6 +48,11 @@ Loki / File ──▶ Filter ──▶ PatternEngine ──▶ Anomaly ──▶
 cd log_agent
 go build -o log-agent ./cmd/agent
 
+# Run the per-service demo (3 concurrent pipelines, no external dependencies).
+# Shows fan-out/fan-in, spike detection, and cross-service correlation into
+# a single incident (root cause: bank-gateway).
+./log-agent config/config-demo.yaml
+
 # Run with local file source (no external dependencies)
 ./log-agent config/config-file.yaml
 
@@ -56,20 +74,29 @@ export LLM_API_KEY="your-deepseek-key"
 
 The agent reads a YAML config file (default: `config/config.yaml`). Environment variables are expanded automatically (e.g. `${SLACK_WEBHOOK_URL}`).
 
+Each entry under `services:` gets its own independent, concurrent pipeline
+(source → filter → pattern → aggregate → anomaly). Their alerts fan in to the
+shared cross-service correlator.
+
 ```yaml
 source:
-  type: file                             # "loki" (default) or "file"
-  file:
-    path: testdata/sample_logs.ndjson    # NDJSON file for local testing
+  type: loki                             # "loki" or "file"
+  loki:                                  # shared Loki connection (type: loki)
+    url: "http://loki.internal:3100"
+    poll_interval: 10s
+    tenant_id: ""
+    service_label: "app"
+    basic_auth_user: ""
+    basic_auth_password: "${GRAFANA_PASSWORD}"
 
-loki:
-  url: "http://loki.internal:3100"
-  query: '{namespace="prod"}'
-  poll_interval: 10s
-  tenant_id: ""
-  service_label: ""
-  basic_auth_user: ""
-  basic_auth_password: "${GRAFANA_PASSWORD}"
+services:                                # one pipeline per entry
+  - name: order-service
+    query: '{app="order-service"}'       # LogQL selector (type: loki)
+  - name: payment-service
+    query: '{app="payment-service"}'
+  # For file mode (source.type: file), use `path:` instead of `query:`:
+  #   - name: order-service
+  #     path: testdata/demo/order-service.ndjson
 
 aggregation:
   window: 1m
@@ -163,7 +190,10 @@ notification:
 
 ### Service Name Extraction
 
-The agent groups errors by **service name**, extracted from Loki stream labels:
+The agent groups errors by **service name**. In the per-service model, each
+pipeline forces its configured `name` onto every line it emits, so the service
+is always authoritative regardless of labels. For reference, `LokiSource` can
+still derive a name from stream labels when no override is given:
 
 - If `service_label` is set (e.g. `"app"`), that label's value is used directly.
 - Otherwise, it falls back through: `service` → `app` → `container` → `job` → `"unknown"`.
@@ -173,10 +203,12 @@ The agent groups errors by **service name**, extracted from Loki stream labels:
 If Loki is not directly reachable, you can point the agent at a Grafana datasource proxy:
 
 ```yaml
-loki:
-  url: "http://localhost:3000/api/datasources/proxy/uid/<datasource-uid>"
-  basic_auth_user: "admin"
-  basic_auth_password: "${GRAFANA_PASSWORD}"
+source:
+  type: loki
+  loki:
+    url: "http://localhost:3000/api/datasources/proxy/uid/<datasource-uid>"
+    basic_auth_user: "admin"
+    basic_auth_password: "${GRAFANA_PASSWORD}"
 ```
 
 Grafana handles the tenant ID header automatically in this mode.
@@ -222,8 +254,9 @@ go test -v ./...
 log_agent/
 ├── cmd/agent/main.go                 # Entry point, config loading, pipeline wiring
 ├── config/
-│   ├── config.yaml                   # Default Loki config
+│   ├── config.yaml                   # Default Loki config (per-service list)
 │   ├── config-file.yaml              # Local file-source testing
+│   ├── config-demo.yaml              # Per-service fan-out/fan-in demo
 │   ├── config-correlator.yaml        # Correlator demo
 │   ├── config-diagnosis.yaml         # Diagnosis demo (DeepSeek)
 │   ├── config-email.yaml             # Email notification demo (Gmail)

@@ -1,0 +1,28 @@
+# Demo fixture — order-service (per-service file; service name comes from config).
+# 4 windows: 3 baseline (~2 errors each) then a spike. Read concurrently with
+# the other two service files by its own pipeline goroutine.
+
+# ── Window 1: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:00:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-001\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:00:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-002\",\"error\":\"downstream timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 2: baseline ───────────────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:01:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-011\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:01:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-012\",\"error\":\"downstream timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 3: baseline complete ──────────────────────────────────────────────
+{"timestamp":"2026-04-12T10:02:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-021\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:02:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-022\",\"error\":\"downstream timeout\"}"}
+{"pause":"6s"}
+
+# ── Window 4: SPIKE — cascading failure from downstream ──────────────────────
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-031\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:01Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-032\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-033\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:02Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-034\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-035\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-036\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-037\",\"error\":\"downstream timeout\"}"}
+{"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-038\",\"error\":\"downstream timeout\"}"}
