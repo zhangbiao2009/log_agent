@@ -1,7 +1,7 @@
 # Log Analysis Agent — Design Document
 
 **Project**: Intelligent Log Monitor for Microservices  
-**Author**: bzhang  
+**Author**: David Zhang  
 **Date**: April 9, 2026  
 **Status**: Phases 1-6 implemented  
 
