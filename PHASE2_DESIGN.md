@@ -15,26 +15,33 @@ notifications-processor: 2 error patterns detected
 
 **Prerequisite:** Phase 1 (Error Catcher) — completed.
 
+> **📎 Historical design record — Phase 2.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before the shared
+> cross-service stages (L4–L6). See [DESIGN.md](DESIGN.md) § "Concurrency Model"
+> for the current topology; the single-source diagrams below are point-in-time.
+
 ---
 
 ## 1. Pipeline Change
 
 ### Before (Phase 1)
 
-```
-LokiSource → Filter → Aggregator → Dispatcher → Notifiers
-                          │
-                    groups by: service
-                    emits: Alert{Count, SampleLines}
+```mermaid
+flowchart LR
+    LS["LokiSource"] --> F["Filter"]
+    F --> AG["Aggregator<br/>groups by: service<br/>emits Alert{Count, SampleLines}"]
+    AG --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 ### After (Phase 2)
 
-```
-LokiSource → Filter → PatternEngine → Aggregator → Dispatcher → Notifiers
-                           │                │
-                      assigns PatternID      groups by: (service, pattern)
-                      to each LogLine        emits: Alert{Patterns}
+```mermaid
+flowchart LR
+    LS["LokiSource"] --> F["Filter"]
+    F --> PE["PatternEngine<br/>assigns PatternID to each LogLine"]
+    PE --> AG["Aggregator<br/>groups by: (service, pattern)<br/>emits Alert{Patterns}"]
+    AG --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 **Key change:** A `PatternEngine` channel stage sits between Filter and

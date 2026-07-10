@@ -8,6 +8,12 @@ minute, all day long. With L3, we only alert when behaviour changes.
 
 **Prerequisite:** Phase 2 (Pattern Fingerprint) — completed.
 
+> **📎 Historical design record — Phase 3.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before the shared
+> cross-service stages (L4–L6). See [DESIGN.md](DESIGN.md) § "Concurrency Model"
+> for the current topology; the single-source diagrams below are point-in-time.
+
 ---
 
 ## 1. Problem With Alerting Without L3
@@ -32,22 +38,21 @@ it has never produced before" is.
 
 ### Before (Phase 2)
 
-```
-Filter → PatternEngine → Aggregator → Dispatcher → Notifiers
-                              │
-                    emits Alert every window
-                    regardless of whether counts are anomalous
+```mermaid
+flowchart LR
+    F["Filter"] --> PE["PatternEngine"]
+    PE --> AG["Aggregator<br/>emits Alert every window,<br/>regardless of whether counts are anomalous"]
+    AG --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 ### After (Phase 3)
 
-```
-Filter → PatternEngine → Aggregator → AnomalyDetector → Dispatcher → Notifiers
-                              │               │
-                    emits Alert             filters: only forwards Alert
-                    every window            if ≥1 pattern is anomalous
-                                            annotates PatternSummary with
-                                            AnomalyKind + Baseline + ZScore
+```mermaid
+flowchart LR
+    F["Filter"] --> PE["PatternEngine"]
+    PE --> AG["Aggregator<br/>emits Alert every window"]
+    AG --> AD["AnomalyDetector<br/>forwards Alert only if ≥1 pattern anomalous;<br/>annotates PatternSummary with AnomalyKind + Baseline + ZScore"]
+    AD --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 `AnomalyDetector` runs as a channel pipeline stage:

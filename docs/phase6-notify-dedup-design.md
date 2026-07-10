@@ -7,6 +7,15 @@
 
 ---
 
+> **📎 Historical design record — Phase 6.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before the shared
+> Correlator → Diagnoser → LifecycleManager stages. See [DESIGN.md](../DESIGN.md)
+> § "Concurrency Model" for the current topology; the single-source pipeline
+> diagrams below are point-in-time.
+
+---
+
 ## 1. Goals
 
 1. **Incident lifecycle management** — Track incidents through OPEN → ONGOING → RESOLVED states so users receive exactly three types of notifications: opened, updated (throttled), and resolved.
@@ -30,16 +39,15 @@
 ### 3.1 Pipeline Change
 
 Current pipeline (Phases 1–5):
-```
-Ingest → Filter → Pattern → Anomaly → Correlator → Diagnoser → Dispatcher → Notifiers
+```mermaid
+flowchart LR
+    I["Ingest"] --> F["Filter"] --> P["Pattern"] --> A["Anomaly"] --> C["Correlator"] --> DG["Diagnoser"] --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 New pipeline with Phase 6:
-```
-Ingest → Filter → Pattern → Anomaly → Correlator → Diagnoser → LifecycleManager → Dispatcher → Notifiers
-                                                                       ▲
-                                                                       │
-                                                              (auto-resolve timer)
+```mermaid
+flowchart LR
+    I["Ingest"] --> F["Filter"] --> P["Pattern"] --> A["Anomaly"] --> C["Correlator"] --> DG["Diagnoser"] --> LM["LifecycleManager<br/>(auto-resolve timer)"] --> D["Dispatcher"] --> N["Notifiers"]
 ```
 
 The **LifecycleManager** is a new pipeline stage inserted between the Diagnoser output and the Dispatcher. It:
@@ -49,27 +57,15 @@ The **LifecycleManager** is a new pipeline stage inserted between the Diagnoser 
 
 ### 3.2 Incident Lifecycle State Machine
 
-```
-    New incident arrives
-           │
-           ▼
-    ┌──────────────┐
-    │     OPEN     │  → Send "opened" notification
-    └──────┬───────┘
-           │
-           │ Same incident ID arrives again
-           │ (within dedup window → suppress)
-           │ (after dedup window → send "updated")
-           ▼
-    ┌──────────────┐
-    │   ONGOING    │  → Optionally send "updated" notification (throttled)
-    └──────┬───────┘
-           │
-           │ No new events for resolve_after duration
-           ▼
-    ┌──────────────┐
-    │   RESOLVED   │  → Send "resolved" notification, remove from map
-    └──────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> OPEN: new incident arrives → send "opened"
+    OPEN --> OPEN: same ID within dedup window (suppress)
+    OPEN --> ONGOING: same ID past dedup window → send "updated"
+    ONGOING --> ONGOING: same ID past dedup window → send "updated" (throttled)
+    OPEN --> RESOLVED: no events for resolve_after
+    ONGOING --> RESOLVED: no events for resolve_after → send "resolved"
+    RESOLVED --> [*]: remove from map
 ```
 
 **State transitions:**

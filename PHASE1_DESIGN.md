@@ -6,21 +6,23 @@ sends notifications to any configured channel (starting with Slack + stdout).
 **Timeline:** Week 1-2  
 **Value delivered:** Engineers get notified of errors faster — no AI needed yet.
 
+> **📎 Historical design record — Phase 1.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before the shared
+> cross-service stages (L4–L6). See [DESIGN.md](DESIGN.md) § "Concurrency Model"
+> for the current topology; the single-source diagrams below are point-in-time.
+
 ---
 
 ## 1. Component Overview
 
-```
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐
-│  LogSource   │───▶│  Filter      │───▶│  Aggregator  │───▶│  Dispatcher     │
-│  (Loki API)  │    │  (ERROR/FATAL│    │  (1-min      │    │  (fan-out to    │
-│              │    │   /WARN)     │    │   windows)   │    │   Notifiers)    │
-└─────────────┘    └──────────────┘    └──────────────┘    └────┬───────┬────┘
-                                                                │       │
-                                                          ┌─────▼──┐ ┌──▼──────┐
-                                                          │ Slack  │ │  Log    │
-                                                          │Notifier│ │Notifier │
-                                                          └────────┘ └─────────┘
+```mermaid
+flowchart LR
+    LS["LogSource<br/>(Loki API)"] --> F["Filter<br/>(ERROR/FATAL/WARN)"]
+    F --> AG["Aggregator<br/>(1-min windows)"]
+    AG --> D["Dispatcher<br/>(fan-out to Notifiers)"]
+    D --> SL["Slack Notifier"]
+    D --> LOG["Log Notifier"]
 ```
 
 Three packages to build: `ingest`, `notify`, and the `main` wiring.

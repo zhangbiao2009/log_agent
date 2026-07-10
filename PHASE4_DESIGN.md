@@ -28,18 +28,20 @@ order-service → payment-service."
 > Go pipeline stage with no external dependencies, while L5 (LLM Diagnosis)
 > requires API integration and RAG. L5 becomes Phase 5.
 
+> **📎 Historical design record — Phase 4.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before this shared
+> Correlator stage. See [DESIGN.md](DESIGN.md) § "Concurrency Model" for the
+> current topology; the single-source pipeline diagrams below are point-in-time.
+
 ---
 
 ## 2. Architecture
 
-```
-                    ┌─────────────────────┐
-  anomalous alerts  │  L4: Correlator     │  incidents
-  ────────────────► │                     │ ──────────────►
-  <-chan Alert       │  1. Buffer alerts   │  <-chan Incident
-                    │  2. Group by graph  │
-                    │  3. Find root cause │
-                    └─────────────────────┘
+```mermaid
+flowchart LR
+    A["anomalous alerts<br/>&lt;-chan Alert"] --> C["L4: Correlator<br/>1. Buffer alerts<br/>2. Group by graph<br/>3. Find root cause"]
+    C --> I["incidents<br/>&lt;-chan Incident"]
 ```
 
 The correlator is a **channel pipeline stage** that sits between the
@@ -48,16 +50,16 @@ other L2-L3 stage.
 
 ### Pipeline (with correlator enabled)
 
-```
-Source → Filter → Pattern → Aggregator → AnomalyDetector → Correlator → Dispatcher
-        <-chan LogLine                   <-chan Alert        <-chan Incident
+```mermaid
+flowchart LR
+    S["Source"] --> F["Filter"] --> P["Pattern"] --> AG["Aggregator"] --> AD["AnomalyDetector"] --> C["Correlator"] --> D["Dispatcher"]
 ```
 
 ### Pipeline (correlator disabled)
 
-```
-Source → Filter → Pattern → Aggregator → AnomalyDetector → Wrap → Dispatcher
-        <-chan LogLine                   <-chan Alert        <-chan Incident
+```mermaid
+flowchart LR
+    S["Source"] --> F["Filter"] --> P["Pattern"] --> AG["Aggregator"] --> AD["AnomalyDetector"] --> W["Wrap"] --> D["Dispatcher"]
 ```
 
 Each Alert is wrapped in a single-alert Incident so the Dispatcher always

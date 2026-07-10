@@ -35,55 +35,37 @@ rollback Service B to v2.3.0."
 The agent runs an **independent pipeline per service** for the per-service
 stages (L1–L3), then **fans in** to shared cross-service stages (L4–L6):
 
-```
-   ┌──────────────────── PER-SERVICE ZONE (N concurrent pipelines) ─────────────────────┐
-   │  svc-a: Source → Filter → Pattern → Aggregate → Anomaly ─┐                          │
-   │  svc-b: Source → Filter → Pattern → Aggregate → Anomaly ─┼─► MergeAlerts (fan-in)   │
-   │  svc-c: Source → Filter → Pattern → Aggregate → Anomaly ─┘         │                │
-   └───────────────────────────────────────────────────────────────────┼────────────────┘
-                                                                        │
-                              ┌──────────────── SHARED ZONE ────────────▼────────────────┐
-                              │  Correlator → LLM Diagnosis → Notify + Dedup → Dispatch   │
-                              └───────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph PS["Per-service zone — N concurrent pipelines"]
+        direction TB
+        A["svc-a: Source → Filter → Pattern → Aggregate → Anomaly"]
+        B["svc-b: Source → Filter → Pattern → Aggregate → Anomaly"]
+        C["svc-c: Source → Filter → Pattern → Aggregate → Anomaly"]
+    end
+    M(["MergeAlerts<br/>(fan-in)"])
+    subgraph SH["Shared zone — single pipeline"]
+        direction LR
+        D["Correlator"] --> E["LLM Diagnosis"] --> F["Notify + Dedup"] --> G["Dispatch"]
+    end
+    A -->|chan Alert| M
+    B -->|chan Alert| M
+    C -->|chan Alert| M
+    M -->|chan Alert| D
 ```
 
-Per-service pipeline detail (repeated once per service):
+Per-service pipeline detail — the layer flow, repeated once per service for
+L1–L3 and shared from L4 onward:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Log Sources                             │
-│   Loki API  /  Kafka topic  /  file tail  (one per service)  │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-               ┌───────▼────────┐
-               │  L1: Ingest +   │  Go: keyword filter (ERROR/FATAL/WARN)
-               │  Fast Filter    │  Drops ~90% of log volume
-               └───────┬────────┘
-                       │
-               ┌───────▼────────┐
-               │  L2: Pattern    │  Go: Drain algorithm
-               │  Fingerprint    │  Groups logs into templates
-               └───────┬────────┘  "connection timeout to <*>:<*>" (500x)
-                       │
-               ┌───────▼────────┐
-               │  L3: Anomaly    │  Go: per-pattern rolling stats
-               │  Detection      │  Triggers on spike / new pattern /
-               └───────┬────────┘  error rate jump
-                       │
-               ┌───────▼────────┐
-               │  L4: Cross-Svc  │  Go: group co-occurring anomalies
-               │  Correlator     │  into a single "incident" using
-               └───────┬────────┘  time window + dependency graph
-                       │
-               ┌───────▼────────┐
-               │  L5: LLM        │  Send incident context to LLM:
-               │  Diagnosis       │  log samples + dependency chain +
-               └───────┬────────┘  recent deploys + past incidents (RAG)
-                       │
-               ┌───────▼────────┐
-               │  L6: Notify     │  Slack / PagerDuty / webhook
-               │  + Dedup        │  Incident lifecycle management
-               └─────────────────┘
+```mermaid
+flowchart TD
+    S["Log Sources<br/>Loki API / file replay — one source per service"]
+    S --> L1["L1: Ingest + Fast Filter<br/>keyword filter ERROR/FATAL/WARN — drops ~90% of volume"]
+    L1 --> L2["L2: Pattern Fingerprint<br/>Drain algorithm groups logs into templates"]
+    L2 --> L3["L3: Anomaly Detection<br/>per-pattern rolling stats: spike / new pattern / rate jump"]
+    L3 --> L4["L4: Cross-Service Correlator<br/>group co-occurring anomalies via time window + dependency graph"]
+    L4 --> L5["L5: LLM Diagnosis<br/>log samples + dependency chain + recent deploys → root cause + fix"]
+    L5 --> L6["L6: Notify + Dedup<br/>incident lifecycle + multi-channel dispatch"]
 ```
 
 ### Concurrency Model
@@ -369,25 +351,14 @@ minute.
 **Purpose:** Deliver the diagnosis to the right people, without alert fatigue.
 
 **Incident lifecycle:**
-```
-    NEW anomaly detected
-           │
-           ▼
-    ┌──────────┐     Same pattern within 5 min?
-    │   OPEN   │◄────── No ──── Create new incident
-    └────┬─────┘
-         │
-         │ More anomalies for same services?
-         ▼
-    ┌──────────┐
-    │ ONGOING  │     Suppress duplicate notifications.
-    └────┬─────┘     Update incident with new data.
-         │
-         │ No new anomalies for 10 min?
-         ▼
-    ┌──────────┐
-    │ RESOLVED │     Send "incident resolved" message.
-    └──────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> OPEN: new anomaly detected
+    OPEN --> ONGOING: more anomalies for same services
+    ONGOING --> ONGOING: suppress duplicate notifications,<br/>update incident with new data
+    OPEN --> RESOLVED: no new anomalies for resolve_after (~10m)
+    ONGOING --> RESOLVED: no new anomalies for resolve_after (~10m)
+    RESOLVED --> [*]: send "incident resolved" message
 ```
 
 **Notification channels are pluggable via a `Notifier` interface:**

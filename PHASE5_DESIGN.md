@@ -21,18 +21,20 @@ cause; payment-service and order-service are cascading."
 > as a result. **Immediate action:** rollback bank-gateway to v2.3.0.
 > **Severity:** P1 — customer-facing outage."
 
+> **📎 Historical design record — Phase 5.** This document reflects the pipeline
+> *as designed at this phase*. The current system runs **one pipeline per
+> service** (fan-out) that fans in via `MergeAlerts` before the shared
+> Correlator → Diagnoser stages. See [DESIGN.md](DESIGN.md) § "Concurrency
+> Model" for the current topology; the diagrams below are point-in-time.
+
 ---
 
 ## 2. Architecture
 
-```
-                    ┌─────────────────────┐
-  incidents         │  L5: Diagnoser      │  enriched incidents
-  ────────────────► │                     │ ──────────────────►
-  <-chan Incident    │  1. Build prompt    │  <-chan Incident
-                    │  2. Call LLM        │  (+ Diagnosis, Severity,
-                    │  3. Parse response  │     Suggestions fields)
-                    └─────────────────────┘
+```mermaid
+flowchart LR
+    I1["incidents<br/>&lt;-chan Incident"] --> DG["L5: Diagnoser<br/>1. Build prompt<br/>2. Call LLM<br/>3. Parse response"]
+    DG --> I2["enriched incidents<br/>&lt;-chan Incident<br/>(+ Diagnosis, Severity, Suggestions)"]
 ```
 
 The Diagnoser is a **channel pipeline stage** (same pattern as every other
@@ -40,16 +42,16 @@ layer) that sits between the Correlator output and the Dispatcher.
 
 ### Pipeline (with diagnoser enabled)
 
-```
-Source → Filter → Pattern → Aggregator → AnomalyDetector → Correlator → Diagnoser → Dispatcher
-                                                                          ↓
-                                                                   enriched Incident
+```mermaid
+flowchart LR
+    S["Source"] --> F["Filter"] --> P["Pattern"] --> AG["Aggregator"] --> AD["AnomalyDetector"] --> C["Correlator"] --> DG["Diagnoser<br/>enriched Incident"] --> D["Dispatcher"]
 ```
 
 ### Pipeline (diagnoser disabled)
 
-```
-Source → Filter → Pattern → Aggregator → AnomalyDetector → Correlator → Dispatcher
+```mermaid
+flowchart LR
+    S["Source"] --> F["Filter"] --> P["Pattern"] --> AG["Aggregator"] --> AD["AnomalyDetector"] --> C["Correlator"] --> D["Dispatcher"]
 ```
 
 When disabled, the Correlator output goes directly to the Dispatcher —

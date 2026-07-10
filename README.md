@@ -7,17 +7,24 @@ An intelligent log monitoring agent that tails logs from [Grafana Loki](https://
 One independent pipeline per service (L1–L3) fans in to shared cross-service
 stages (L4–L6):
 
-```
- svc-a: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┐
- svc-b: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┤
- svc-c: Loki/File ─▶ Filter ─▶ PatternEngine ─▶ Aggregator ─▶ Anomaly ─┘
-   (L1)             (WARN+)    (Drain)          (window)     (spike/     │
-                                                             new/rate)   │
-                                                        MergeAlerts (fan-in)
-                                                                         │
-   Correlator ─▶ Diagnoser ─▶ Lifecycle ─▶ Dispatcher ──▶ Slack / Teams / Email / Log
-   (L4, dep      (L5, LLM     (L6, dedup/
-    graph)        root cause)  resolve)
+```mermaid
+flowchart LR
+    subgraph PS["Per-service pipelines (concurrent)"]
+        direction TB
+        A["svc-a: Filter → PatternEngine → Aggregator → Anomaly"]
+        B["svc-b: Filter → PatternEngine → Aggregator → Anomaly"]
+        C["svc-c: Filter → PatternEngine → Aggregator → Anomaly"]
+    end
+    SRC["Loki / File<br/>(one source per service)"] --> PS
+    M(["MergeAlerts<br/>fan-in"])
+    A --> M
+    B --> M
+    C --> M
+    M --> D["Correlator<br/>(dep graph)"]
+    D --> E["Diagnoser<br/>(LLM root cause)"]
+    E --> F["Lifecycle<br/>(dedup / resolve)"]
+    F --> G{{"Dispatcher"}}
+    G --> Slack & Teams & Email & Log
 ```
 
 Each per-service pipeline runs concurrently with its own Drain tree, aggregation
