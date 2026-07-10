@@ -111,6 +111,60 @@ baseline stores), bounded per service by `pattern.max_patterns`. For a few
 dozen services this is negligible; the win is real CPU parallelism for the
 Drain-heavy path and failure isolation between services.
 
+### Buffering & Time Windows
+
+A recurring source of confusion is *which* stages hold data back and which just
+pass it through. Most stages are **streaming**: they take one item, transform
+it, and emit it immediately. Only two stages are **windowed** — they behave like
+a **dam**, collecting everything that arrives during a fixed time window and then
+releasing a single summary when the window closes.
+
+**The two dams:**
+
+1. **Aggregator (between L2 and L3, default 1 min).** Raw error lines pour in
+   line-by-line. The Aggregator buckets them by `(service, patternID)` and holds
+   them for the window. When the window timer fires it emits **one `Alert` per
+   service** — collapsing potentially thousands of lines into a handful of
+   pattern counts. This is what turns a firehose of lines into a trickle of
+   alerts.
+2. **Correlator (L4, default 2 min).** Alerts from *all* services stream in; the
+   Correlator buffers them for its window, then groups co-occurring alerts into
+   **incidents** via the dependency graph. This is what lets a cascade across
+   three services become one incident instead of three.
+
+Everything else streams straight through:
+
+| Stage | Mode | Holds state? | Emits when |
+|---|---|---|---|
+| L1 Filter | streaming | none | per line, immediately |
+| L2 Pattern (Drain) | streaming | Drain tree — *pattern memory*, not a backlog | per line, immediately |
+| **Aggregator** | **windowed (dam)** | bucket map for the current window | window timer fires (or input closes) |
+| L3 Anomaly | streaming | EMA baselines — *statistical memory*, not a backlog | per alert, immediately |
+| **Correlator** | **windowed (dam)** | alert buffer for the current window | window timer fires (or input closes) |
+| L5 Diagnosis | streaming | none | per incident, after the LLM responds |
+| L6 Lifecycle | timer-driven | tracked-incident map | on each event **and** on a periodic auto-resolve tick |
+
+**Two kinds of "state" — don't conflate them.** The Drain tree (L2) and the EMA
+baselines (L3) *remember* things across items (learned templates, per-pattern
+mean/σ), but they never **delay** an item — each line or alert still flows
+through instantly. A window is fundamentally different: it *deliberately holds
+items back* until a timer fires. Only the two dams do that.
+
+**L6 Lifecycle is a third, distinct time behavior.** It is neither streaming nor
+a fixed flush window. It keeps a map of active incidents and uses timers for two
+jobs: a **dedup window** (suppress repeat notifications for the same incident)
+and **auto-resolve** (emit a RESOLVED event once an incident has been quiet for
+`resolve_after`, checked by a background ticker). It reacts to *events plus the
+passage of time*, not to a batch boundary.
+
+**Latency intuition.** Because the two dams are in series, worst-case detection
+latency is roughly **Aggregator window + Correlator window** (plus the LLM call).
+With the defaults, a burst that begins just after a flush waits up to ~1 min to
+be summarized, then up to ~2 min to be correlated — so the LLM sees the incident
+within ~3 min. Shrinking the windows lowers latency but produces noisier, less
+complete grouping; this is the core knob-vs-signal trade-off (see §5, Tuning
+knobs).
+
 ## 4. Layer-by-Layer Design
 
 ### L1: Ingest + Fast Filter
