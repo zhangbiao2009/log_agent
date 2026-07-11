@@ -27,5 +27,6 @@
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-037\",\"error\":\"downstream timeout\"}"}
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"order processing failed\",\"orderID\":\"ord-038\",\"error\":\"downstream timeout\"}"}
 
-# ── Tail pause: keep the incident OPEN before EOF/shutdown ───
-{"pause":"6s"}
+# ── Tail pause: hold past resolve_after (1m) so the incident auto-resolves
+#    from inactivity — not from the agent exiting on EOF. ───
+{"pause":"75s"}

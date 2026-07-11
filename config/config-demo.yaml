@@ -18,8 +18,10 @@
 #   - Window 4: [SPIKE] on all three services
 #   - A single incident: root cause bank-gateway, chain
 #     bank-gateway → payment-service → order-service
+#   - "incident auto-resolved" (NOT "resolved (shutdown)") — the 75s tail
+#     pause outlasts resolve_after (1m), so inactivity resolves it before EOF.
 #
-# Total run time: ~25s (4 windows × ~6s pauses).
+# Total run time: ~95s (3 baseline windows × ~6s + spike + 75s tail pause).
 
 source:
   type: file
