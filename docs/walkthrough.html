@@ -1,0 +1,785 @@
+<style>
+  :root {
+    --paper: #E9EDF0;
+    --surface: #FFFFFF;
+    --surface-2: #F3F6F8;
+    --ink: #14202A;
+    --muted: #5A6D79;
+    --faint: #8595A0;
+    --line: #D3DBE1;
+    --accent: #B26F14;
+    --accent-soft: #F0E2CB;
+    --stream: #3F6B82;
+    --p1: #C13B33;
+    --p2: #B77A16;
+    --p3: #3F6B82;
+    --good: #3E7D63;
+    --shadow: 20px 30px 60px -30px rgba(20, 32, 42, 0.35);
+
+    --font-display: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --maxw: 74rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0D141A;
+      --surface: #141E26;
+      --surface-2: #101820;
+      --ink: #E7ECEF;
+      --muted: #93A3AE;
+      --faint: #64757F;
+      --line: #23303A;
+      --accent: #E9A23B;
+      --accent-soft: #2C2415;
+      --stream: #6BA3BE;
+      --p1: #E0665E;
+      --p2: #E4A63E;
+      --p3: #6BA3BE;
+      --good: #5FAE88;
+      --shadow: 20px 30px 70px -30px rgba(0, 0, 0, 0.7);
+    }
+  }
+
+  :root[data-theme="light"] {
+    --paper: #E9EDF0; --surface: #FFFFFF; --surface-2: #F3F6F8;
+    --ink: #14202A; --muted: #5A6D79; --faint: #8595A0; --line: #D3DBE1;
+    --accent: #B26F14; --accent-soft: #F0E2CB; --stream: #3F6B82;
+    --p1: #C13B33; --p2: #B77A16; --p3: #3F6B82; --good: #3E7D63;
+    --shadow: 20px 30px 60px -30px rgba(20, 32, 42, 0.35);
+  }
+  :root[data-theme="dark"] {
+    --paper: #0D141A; --surface: #141E26; --surface-2: #101820;
+    --ink: #E7ECEF; --muted: #93A3AE; --faint: #64757F; --line: #23303A;
+    --accent: #E9A23B; --accent-soft: #2C2415; --stream: #6BA3BE;
+    --p1: #E0665E; --p2: #E4A63E; --p3: #6BA3BE; --good: #5FAE88;
+    --shadow: 20px 30px 70px -30px rgba(0, 0, 0, 0.7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    font-size: 17px;
+  }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 1.5rem; }
+
+  .mono { font-family: var(--font-display); }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 46px 46px;
+    opacity: 0.28;
+    pointer-events: none;
+    z-index: 0;
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+  }
+  main { position: relative; z-index: 1; }
+
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 0.72rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 1rem;
+    display: flex; align-items: center; gap: 0.6rem;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 1.6rem; height: 1px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  header.hero {
+    position: relative; z-index: 1;
+    padding: 5.5rem 0 3.5rem;
+    border-bottom: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .beacon {
+    position: absolute;
+    top: 3.5rem; right: max(2rem, calc(50vw - 34rem));
+    width: 84px; height: 84px;
+    display: grid; place-items: center;
+  }
+  .beacon .dot {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 14px 2px var(--accent);
+  }
+  .beacon .ring {
+    position: absolute; inset: 0;
+    border: 1.5px solid var(--accent);
+    border-radius: 50%;
+    opacity: 0;
+    animation: pulse 3.2s ease-out infinite;
+  }
+  .beacon .ring:nth-child(2) { animation-delay: 1.6s; }
+  @keyframes pulse {
+    0% { transform: scale(0.3); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 0; }
+  }
+
+  .kicker {
+    font-family: var(--font-display);
+    font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 1.4rem;
+  }
+  .kicker b { color: var(--ink); font-weight: 600; }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 650;
+    font-size: clamp(2.1rem, 5.4vw, 3.9rem);
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    margin: 0 0 1.6rem;
+    max-width: 20ch;
+    text-wrap: balance;
+  }
+  h1 .in { color: var(--stream); }
+  h1 .out { color: var(--accent); }
+
+  .lede {
+    font-size: clamp(1.05rem, 1.7vw, 1.28rem);
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0 0 2.4rem;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .quote {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    border-radius: 0 10px 10px 0;
+    padding: 1.4rem 1.6rem;
+    max-width: 56ch;
+    font-size: 1rem;
+  }
+  .quote .q-label {
+    font-family: var(--font-display);
+    font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--faint); margin-bottom: 0.6rem;
+  }
+  .quote em { color: var(--ink); font-style: normal; }
+  .quote .p1tag {
+    color: var(--p1); font-weight: 700; font-family: var(--font-display);
+  }
+
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 0.6rem;
+    margin-top: 2.4rem;
+  }
+  .chip {
+    font-family: var(--font-display);
+    font-size: 0.76rem;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    border-radius: 999px;
+    padding: 0.32rem 0.85rem;
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  section { padding: 4.5rem 0; border-bottom: 1px solid var(--line); }
+  .sec-head { max-width: 60ch; margin-bottom: 2.8rem; }
+  .sec-head h2 {
+    font-family: var(--font-display);
+    font-weight: 620;
+    font-size: clamp(1.5rem, 3vw, 2.15rem);
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    margin: 0 0 0.9rem;
+    text-wrap: balance;
+  }
+  .sec-head p { margin: 0; color: var(--muted); font-size: 1.05rem; }
+  .sec-head p b { color: var(--ink); font-weight: 600; }
+
+  .diagram { display: grid; gap: 1.5rem; }
+  .scroll-x { overflow-x: auto; padding-bottom: 0.5rem; }
+  .zone {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    padding: 1.4rem 1.5rem;
+    min-width: 640px;
+  }
+  .zone-label {
+    font-family: var(--font-display);
+    font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 1.1rem;
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .zone-label .hint { color: var(--stream); letter-spacing: 0.04em; text-transform: none; }
+  .zone.shared .zone-label .hint { color: var(--accent); }
+
+  .svc-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.7rem;
+  }
+  .svc-row:last-child { margin-bottom: 0; }
+  .svc-name {
+    font-family: var(--font-display); font-size: 0.78rem;
+    color: var(--stream); font-weight: 600;
+    width: 8.5rem; flex-shrink: 0;
+  }
+  .flow { display: flex; align-items: center; gap: 0.35rem; flex-wrap: nowrap; }
+  .node {
+    font-family: var(--font-display); font-size: 0.74rem;
+    padding: 0.32rem 0.62rem;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--surface-2);
+    white-space: nowrap;
+    color: var(--ink);
+  }
+  .arrow { color: var(--faint); flex-shrink: 0; }
+
+  .merge {
+    display: flex; align-items: center; gap: 0.6rem;
+    justify-content: center;
+    margin: 0.2rem 0;
+  }
+  .merge .m-node {
+    font-family: var(--font-display); font-size: 0.78rem;
+    padding: 0.42rem 1rem;
+    border: 1.5px solid var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 8px; font-weight: 600;
+  }
+  .zone.shared .flow { justify-content: flex-start; }
+  .zone.shared .node.hot {
+    border-color: var(--accent); color: var(--accent);
+  }
+
+  .funnel { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .band {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 1.15rem 1.5rem;
+    display: grid;
+    grid-template-columns: 3.4rem 1fr auto;
+    gap: 1.2rem;
+    align-items: center;
+    position: relative;
+  }
+  .band + .band { margin-top: 0.9rem; }
+  .band::after {
+    content: "";
+    position: absolute;
+    bottom: -0.9rem; left: 50%;
+    width: 1px; height: 0.9rem;
+    background: var(--line);
+    transform: translateX(-50%);
+  }
+  .band:last-child::after { display: none; }
+
+  .band .lid {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 7px;
+    text-align: center;
+    padding: 0.3rem 0;
+  }
+  .band .body h3 {
+    font-family: var(--font-display);
+    font-size: 0.98rem; font-weight: 620;
+    margin: 0 0 0.2rem; color: var(--ink);
+  }
+  .band .body p { margin: 0; font-size: 0.92rem; color: var(--muted); line-height: 1.45; }
+  .band .body .algo {
+    color: var(--stream); font-family: var(--font-display); font-size: 0.82rem;
+  }
+  .band .rate {
+    font-family: var(--font-display);
+    text-align: right;
+    font-size: 0.78rem;
+    color: var(--faint);
+    min-width: 8rem;
+  }
+  .band .rate .n { display: block; color: var(--ink); font-size: 1.05rem; font-weight: 600; }
+  .band.payoff { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--surface)); }
+  .band.payoff .rate .n { color: var(--accent); }
+
+  .b1 { width: 100%; }
+  .b2 { width: 92%; }
+  .b3 { width: 82%; }
+  .b4 { width: 70%; }
+  .b5 { width: 58%; }
+  .b6 { width: 58%; }
+
+  .note-callout {
+    margin-top: 2.6rem;
+    display: flex; gap: 1rem; align-items: flex-start;
+    background: var(--surface-2);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    font-size: 0.92rem;
+    color: var(--muted);
+    max-width: 64ch;
+    margin-left: auto; margin-right: auto;
+  }
+  .note-callout .ico { color: var(--accent); font-family: var(--font-display); font-weight: 700; }
+  .note-callout b { color: var(--ink); }
+
+  .trace { display: grid; gap: 0; }
+  .step {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.4rem;
+  }
+  .rail { display: flex; flex-direction: column; align-items: center; }
+  .rail .marker {
+    width: 2.6rem; height: 2.6rem; flex-shrink: 0;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-family: var(--font-display); font-size: 0.8rem; font-weight: 700;
+    background: var(--surface); border: 1.5px solid var(--line); color: var(--muted);
+  }
+  .step.crit .marker { border-color: var(--p1); color: var(--p1); }
+  .step.final .marker { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .rail .line { width: 1.5px; flex: 1; background: var(--line); margin: 0.3rem 0; min-height: 1.4rem; }
+  .step:last-child .rail .line { display: none; }
+  .step-body { padding-bottom: 1.8rem; }
+  .step-body .t {
+    font-family: var(--font-display); font-size: 0.7rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 0.3rem;
+  }
+  .step-body h3 { margin: 0 0 0.5rem; font-size: 1.08rem; font-family: var(--font-body); font-weight: 650; }
+  .step-body h3 .svc { font-family: var(--font-display); color: var(--stream); font-size: 0.96rem; }
+  .step-body p { margin: 0 0 0.7rem; color: var(--muted); font-size: 0.96rem; }
+
+  .logline {
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--stream);
+    border-radius: 0 7px 7px 0;
+    padding: 0.55rem 0.85rem;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .logline + .logline { margin-top: 0.4rem; }
+  .logline.err { border-left-color: var(--p1); }
+  .logline .dim { color: var(--faint); }
+  .logline .cnt { color: var(--p1); font-weight: 700; }
+
+  .incident {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--p1);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 1.5rem 1.6rem;
+    margin-top: 0.4rem;
+  }
+  .incident .hdr { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .sev {
+    font-family: var(--font-display); font-weight: 700; font-size: 0.78rem;
+    padding: 0.22rem 0.6rem; border-radius: 6px; letter-spacing: 0.04em;
+  }
+  .sev.p1 { background: var(--p1); color: #fff; }
+  .incident .hdr .title { font-family: var(--font-display); font-weight: 620; font-size: 1rem; }
+  .incident dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1.2rem; }
+  .incident dt {
+    font-family: var(--font-display); font-size: 0.72rem; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); padding-top: 0.15rem;
+  }
+  .incident dd { margin: 0; font-size: 0.95rem; }
+  .incident dd b { color: var(--ink); }
+  .incident .fix {
+    margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--line);
+    display: flex; gap: 0.7rem; align-items: baseline;
+  }
+  .incident .fix .lbl { font-family: var(--font-display); color: var(--good); font-weight: 700; font-size: 0.82rem; white-space: nowrap; }
+  .incident .fix .act { font-weight: 600; }
+
+  .sev-pills { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.9rem; }
+  .sev-pill { font-family: var(--font-display); font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 5px; border: 1px solid; }
+  .sev-pill.p1 { color: var(--p1); border-color: var(--p1); }
+  .sev-pill.p2 { color: var(--p2); border-color: var(--p2); }
+  .sev-pill.p3 { color: var(--p3); border-color: var(--p3); }
+
+  .run { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: start; }
+  .term {
+    background: #0B1116;
+    border: 1px solid #1E2A33;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    font-family: var(--font-display);
+  }
+  .term .bar { display: flex; gap: 0.5rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid #1E2A33; }
+  .term .bar span { width: 11px; height: 11px; border-radius: 50%; background: #33424C; }
+  .term .bar span:first-child { background: #E0665E; }
+  .term .bar span:nth-child(2) { background: #E4A63E; }
+  .term .bar span:nth-child(3) { background: #5FAE88; }
+  .term pre { margin: 0; padding: 1.1rem 1.2rem; font-size: 0.82rem; line-height: 1.7; color: #C6D2DA; overflow-x: auto; }
+  .term .c { color: #5FAE88; }
+  .term .cm { color: #64757F; }
+  .term .o { color: #E9A23B; }
+
+  .filemap { font-size: 0.95rem; }
+  .filemap h3 { font-family: var(--font-display); font-size: 0.95rem; margin: 0 0 1rem; }
+  .filemap ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+  .filemap li { display: grid; grid-template-columns: 12rem 1fr; gap: 0.8rem; align-items: baseline; }
+  .filemap code {
+    font-family: var(--font-display); font-size: 0.82rem; color: var(--stream);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 0.12rem 0.45rem; white-space: nowrap;
+  }
+  .filemap span { color: var(--muted); font-size: 0.9rem; }
+
+  footer.foot {
+    padding: 2.5rem 0 3.5rem; text-align: center;
+    font-family: var(--font-display); font-size: 0.78rem; color: var(--faint);
+  }
+
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .beacon .ring { animation: none; }
+  }
+
+  @media (max-width: 760px) {
+    body { font-size: 16px; }
+    .beacon { display: none; }
+    .band { grid-template-columns: 2.8rem 1fr; }
+    .band .rate { grid-column: 1 / -1; text-align: left; border-top: 1px solid var(--line); padding-top: 0.6rem; }
+    .b2, .b3, .b4, .b5, .b6 { width: 100%; }
+    .run { grid-template-columns: 1fr; }
+    .filemap li { grid-template-columns: 1fr; gap: 0.15rem; }
+    .incident dl { grid-template-columns: 1fr; gap: 0.15rem 0; }
+    .incident dt { margin-top: 0.6rem; }
+  }
+</style>
+
+<main>
+  <header class="hero">
+    <div class="wrap">
+      <div class="beacon" aria-hidden="true">
+        <span class="ring"></span><span class="ring"></span><span class="dot"></span>
+      </div>
+      <p class="kicker">log&#8209;agent &nbsp;/&nbsp; <b>a self-driving incident pipeline</b> &nbsp;/&nbsp; Go 1.25</p>
+      <h1>A <span class="in">firehose of logs</span> in.<br>About <span class="out">a dozen diagnosed incidents</span> out.</h1>
+      <p class="lede">Engineers used to dig through logs from every service by hand, guess which one was the root cause, and guess at the fix. <b>log-agent watches every service continuously</b>, spots what's abnormal, groups a cascade into a single incident, and asks an LLM what broke and how to fix it &mdash; before anyone opens a dashboard.</p>
+
+      <div class="quote">
+        <div class="q-label">What lands in the on-call channel</div>
+        <em>&ldquo;bank-gateway stopped responding 2 minutes after its v2.3.1 deploy, cascading into connection failures in payment-service and timeouts in order-service. <span class="p1tag">P1</span> &mdash; recommend rolling bank-gateway back to v2.3.0.&rdquo;</em>
+      </div>
+
+      <div class="meta-row">
+        <span class="chip"><b>6</b> layers, L1&rarr;L6</span>
+        <span class="chip"><b>~5&ndash;20</b> LLM calls / day</span>
+        <span class="chip"><b>$0</b> on the hot path</span>
+        <span class="chip">in-memory, <b>no database</b></span>
+        <span class="chip">one binary</span>
+      </div>
+    </div>
+  </header>
+
+  <section id="shape">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">The shape</p>
+        <h2>One pipeline per service, fanning in to one shared brain.</h2>
+        <p>The cheap, high-volume work runs <b>independently and in parallel for every service</b> (L1&ndash;L3) &mdash; each with its own pattern tree and baselines, so a slow or failing source for one service never blocks the others. Their low-volume alert channels <b>fan in</b> to a single shared pipeline (L4&ndash;L6) that has to see everything at once to correlate a cross-service cascade.</p>
+      </div>
+
+      <div class="diagram reveal">
+        <div class="scroll-x">
+          <div class="zone">
+            <div class="zone-label"><span>Per-service zone &mdash; N concurrent pipelines</span><span class="hint">fan-out &rarr;</span></div>
+            <div class="svc-row">
+              <span class="svc-name">order-service</span>
+              <div class="flow">
+                <span class="node">Source</span><span class="arrow">&rarr;</span>
+                <span class="node">Filter</span><span class="arrow">&rarr;</span>
+                <span class="node">Pattern</span><span class="arrow">&rarr;</span>
+                <span class="node">Aggregate</span><span class="arrow">&rarr;</span>
+                <span class="node">Anomaly</span>
+              </div>
+            </div>
+            <div class="svc-row">
+              <span class="svc-name">payment-service</span>
+              <div class="flow">
+                <span class="node">Source</span><span class="arrow">&rarr;</span>
+                <span class="node">Filter</span><span class="arrow">&rarr;</span>
+                <span class="node">Pattern</span><span class="arrow">&rarr;</span>
+                <span class="node">Aggregate</span><span class="arrow">&rarr;</span>
+                <span class="node">Anomaly</span>
+              </div>
+            </div>
+            <div class="svc-row">
+              <span class="svc-name">bank-gateway</span>
+              <div class="flow">
+                <span class="node">Source</span><span class="arrow">&rarr;</span>
+                <span class="node">Filter</span><span class="arrow">&rarr;</span>
+                <span class="node">Pattern</span><span class="arrow">&rarr;</span>
+                <span class="node">Aggregate</span><span class="arrow">&rarr;</span>
+                <span class="node">Anomaly</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="merge"><span class="m-node">MergeAlerts &mdash; fan-in of every service's alert channel</span></div>
+
+        <div class="scroll-x">
+          <div class="zone shared">
+            <div class="zone-label"><span>Shared zone &mdash; single pipeline, sees all services</span><span class="hint">one incident view</span></div>
+            <div class="svc-row">
+              <span class="svc-name" style="color:var(--accent)">chan Alert</span>
+              <div class="flow">
+                <span class="node hot">Correlator</span><span class="arrow">&rarr;</span>
+                <span class="node hot">LLM&nbsp;Diagnosis</span><span class="arrow">&rarr;</span>
+                <span class="node hot">Lifecycle&nbsp;+&nbsp;Dedup</span><span class="arrow">&rarr;</span>
+                <span class="node hot">Dispatch</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="funnel">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">How it works</p>
+        <h2>Every layer is a filter. The stream narrows as it falls.</h2>
+        <p>The whole design turns on one idea: <b>do the expensive work as rarely as possible.</b> Each layer cuts the volume before the next one sees it, so by the time a stream reaches the costly LLM call it has shrunk by several orders of magnitude. Read this top to bottom &mdash; the bands narrow because the data does.</p>
+      </div>
+
+      <div class="funnel">
+        <div class="band b1 reveal">
+          <div class="lid">L1</div>
+          <div class="body">
+            <h3>Ingest &amp; Filter</h3>
+            <p>Poll Loki or replay a file &mdash; <span class="algo">one source per service</span>. Drop every line that isn't an error before anything else touches it.</p>
+          </div>
+          <div class="rate"><span class="n">~90%</span>dropped at the door</div>
+        </div>
+
+        <div class="band b2 reveal">
+          <div class="lid">L2</div>
+          <div class="body">
+            <h3>Pattern fingerprint</h3>
+            <p><span class="algo">Drain algorithm</span> groups identical lines into templates, so you count <em>kinds</em> of errors, not lines. No regex to maintain &mdash; it learns templates from the stream.</p>
+          </div>
+          <div class="rate"><span class="n">thousands&rarr;few</span>lines to templates</div>
+        </div>
+
+        <div class="band b3 reveal">
+          <div class="lid">L3</div>
+          <div class="body">
+            <h3>Anomaly detection</h3>
+            <p>Compare each pattern to <span class="algo">its own rolling baseline</span>. Forward only three things: a spike (&gt; mean + 3&sigma;), a brand-new pattern, or a service-wide rate jump.</p>
+          </div>
+          <div class="rate"><span class="n">rare</span>most windows stay silent</div>
+        </div>
+
+        <div class="band b4 reveal">
+          <div class="lid">L4</div>
+          <div class="body">
+            <h3>Cross-service correlator</h3>
+            <p>Group alerts that co-occur across services using the <span class="algo">dependency graph</span>. A cascade through three services becomes <em>one</em> incident, with the deepest service flagged as the likely root cause.</p>
+          </div>
+          <div class="rate"><span class="n">3&rarr;1</span>cascade to incident</div>
+        </div>
+
+        <div class="band b5 reveal">
+          <div class="lid">L5</div>
+          <div class="body">
+            <h3>LLM diagnosis</h3>
+            <p>Hand the incident &mdash; log samples, dependency chain, recent deploys &mdash; to <span class="algo">DeepSeek</span>. Get back a root cause, a severity, and a concrete fix. This is the target the whole funnel protects.</p>
+          </div>
+          <div class="rate"><span class="n">5&ndash;20 / day</span>not per minute</div>
+        </div>
+
+        <div class="band b6 payoff reveal">
+          <div class="lid">L6</div>
+          <div class="body">
+            <h3>Lifecycle &amp; notify</h3>
+            <p>Track each incident <span class="algo">OPEN &rarr; ONGOING &rarr; RESOLVED</span>, suppress duplicate pings, auto-resolve when it goes quiet, and route by severity to Slack, Teams, or email.</p>
+          </div>
+          <div class="rate"><span class="n">right people</span>no alert fatigue</div>
+        </div>
+      </div>
+
+      <div class="note-callout reveal">
+        <span class="ico">&#9202;</span>
+        <div>Two stages are <b>dams</b>, not streams: the aggregator holds a ~1&nbsp;min window, the correlator a ~2&nbsp;min window. Back to back, that's why the LLM typically sees a fresh incident within <b>~3 minutes</b> &mdash; the core latency-vs-signal trade-off. Everything else flows through instantly.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trace">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">Follow one failure</p>
+        <h2>A bad deploy, traced end to end.</h2>
+        <p>The clearest way to understand the pipeline is to watch a single real cascade fall through it &mdash; the exact scenario the demo config replays.</p>
+      </div>
+
+      <div class="trace">
+        <div class="step reveal">
+          <div class="rail"><div class="marker">14:30</div><div class="line"></div></div>
+          <div class="step-body">
+            <div class="t">The trigger</div>
+            <h3><span class="svc">bank-gateway</span> ships v2.3.1</h3>
+            <p>A routine deploy goes out. Two minutes later, the gateway stops responding &mdash; and stops emitting logs entirely.</p>
+          </div>
+        </div>
+
+        <div class="step crit reveal">
+          <div class="rail"><div class="marker">L1&ndash;3</div><div class="line"></div></div>
+          <div class="step-body">
+            <div class="t">Downstream services light up</div>
+            <h3><span class="svc">payment-service</span> can't reach it</h3>
+            <p>Connection errors pour in. L2 collapses 200 near-identical lines into a single template; L3 sees the spike against a baseline of zero.</p>
+            <div class="logline err">connection refused to <span class="dim">bank-gw-prod-1:443</span>, request_id=abc123 <span class="cnt">&times;200/min</span></div>
+          </div>
+        </div>
+
+        <div class="step crit reveal">
+          <div class="rail"><div class="marker">L1&ndash;3</div><div class="line"></div></div>
+          <div class="step-body">
+            <div class="t">The cascade spreads upstream</div>
+            <h3><span class="svc">order-service</span> starts timing out</h3>
+            <p>Because it depends on payment-service, its own error rate jumps from a baseline of 2 to 50/min.</p>
+            <div class="logline err">timeout calling payment-service: context deadline exceeded after 5s <span class="cnt">&times;50/min</span></div>
+          </div>
+        </div>
+
+        <div class="step reveal">
+          <div class="rail"><div class="marker">L4</div><div class="line"></div></div>
+          <div class="step-body">
+            <div class="t">Correlation</div>
+            <h3>Three alerts &rarr; one incident</h3>
+            <p>All three fire inside the correlation window and are linked in the dependency graph: <span class="mono" style="color:var(--stream)">order&nbsp;&rarr;&nbsp;payment&nbsp;&rarr;&nbsp;bank-gateway</span>. The deepest service &mdash; bank-gateway &mdash; is flagged as the suspected root cause.</p>
+          </div>
+        </div>
+
+        <div class="step final reveal">
+          <div class="rail"><div class="marker">L5&ndash;6</div><div class="line"></div></div>
+          <div class="step-body">
+            <div class="t">Diagnosis &amp; dispatch</div>
+            <h3>The LLM writes the incident &mdash; and it gets routed</h3>
+            <p>The incident, its samples, the dependency chain and the recent deploy go to the model. Its verdict comes back, gets deduped, and lands in the channels mapped to its severity:</p>
+            <div class="incident">
+              <div class="hdr">
+                <span class="sev p1">P1</span>
+                <span class="title">bank-gateway DOWN &mdash; cascading outage</span>
+              </div>
+              <dl>
+                <dt>Root cause</dt><dd><b>bank-gateway</b> stopped responding after its v2.3.1 deploy at 14:30; payment-service and order-service are cascading off it.</dd>
+                <dt>Affected</dt><dd>bank-gateway, payment-service, order-service</dd>
+                <dt>Duration</dt><dd>3 min (ongoing)</dd>
+                <dt>Precedent</dt><dd>Resembles the Q3 2025 outage &mdash; config error right after a deploy.</dd>
+              </dl>
+              <div class="fix">
+                <span class="lbl">IMMEDIATE ACTION</span>
+                <span class="act">Roll bank-gateway back to v2.3.0.</span>
+              </div>
+            </div>
+            <div class="sev-pills">
+              <span class="sev-pill p1">P1 &rarr; Slack #incidents + email + page</span>
+              <span class="sev-pill p2">P2 &rarr; Slack + email</span>
+              <span class="sev-pill p3">P3 &rarr; #service-health</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="run" style="border-bottom:none;">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">See it yourself</p>
+        <h2>The demo runs the whole cascade with no external deps.</h2>
+        <p>The fastest way to make all of this concrete: build the binary and point it at the demo config, which replays the exact scenario above from local NDJSON files.</p>
+      </div>
+
+      <div class="run reveal">
+        <div class="term">
+          <div class="bar"><span></span><span></span><span></span></div>
+          <pre><span class="cm"># one binary, one arg: the config path</span>
+<span class="c">$</span> go build -o log-agent ./cmd/agent
+<span class="c">$</span> ./log-agent config/config-demo.yaml
+
+<span class="cm"># watch incidents open, get diagnosed,</span>
+<span class="cm"># and auto-resolve &mdash; live</span>
+<span class="o">INCIDENT</span>  P1  bank-gateway DOWN
+<span class="o">DIAGNOSE</span>  root cause &rarr; v2.3.1 deploy
+<span class="o">RESOLVED</span>  quiet for resolve_after</pre>
+        </div>
+
+        <div class="filemap">
+          <h3>Where the layers live</h3>
+          <ul>
+            <li><code>cmd/agent/main.go</code><span>Wires every stage together &mdash; start here.</span></li>
+            <li><code>internal/ingest/</code><span>L1 &mdash; sources &amp; the error filter.</span></li>
+            <li><code>internal/pattern/</code><span>L2 &mdash; the Drain algorithm.</span></li>
+            <li><code>internal/anomaly/</code><span>L3 &mdash; baselines &amp; spike detection.</span></li>
+            <li><code>internal/correlator/</code><span>L4 &mdash; the dependency graph.</span></li>
+            <li><code>internal/diagnosis/</code><span>L5 &mdash; prompt, LLM call, parse.</span></li>
+            <li><code>internal/incident/ &middot; notify/</code><span>L6 &mdash; lifecycle &amp; routing.</span></li>
+            <li><code>DESIGN.md</code><span>The authoritative deep dive.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    log-agent &nbsp;&middot;&nbsp; L1 &rarr; L6 &nbsp;&middot;&nbsp; a walkthrough for engineers
+  </footer>
+</main>
+
+<script>
+  (function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      els.forEach(function (e) { e.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
