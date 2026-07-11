@@ -324,9 +324,12 @@
   .band .rate .n { display: block; color: var(--ink); font-size: 1.05rem; font-weight: 600; }
   .band.payoff { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--surface)); }
   .band.payoff .rate .n { color: var(--accent); }
+  .band.dam .lid { color: var(--stream); border-color: var(--stream); font-size: 0.72rem; }
+  .band.dam { border-style: dashed; }
 
   .b1 { width: 100%; }
   .b2 { width: 92%; }
+  .bagg { width: 86%; }
   .b3 { width: 82%; }
   .b4 { width: 70%; }
   .b5 { width: 58%; }
@@ -462,6 +465,51 @@
     font-family: var(--font-display); font-size: 0.78rem; color: var(--faint);
   }
 
+  /* ---------- data transformation cards ---------- */
+  .xform {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 1.4rem 1.5rem;
+  }
+  .xform + .xform { margin-top: 1.4rem; }
+  .xform-head { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
+  .xform-head .lid {
+    font-family: var(--font-display); font-weight: 700; font-size: 0.82rem;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 7px;
+    padding: 0.28rem 0.6rem;
+  }
+  .xform-head h3 { font-family: var(--font-display); font-size: 1rem; font-weight: 620; margin: 0; }
+  .xform-head .delta {
+    margin-left: auto; font-family: var(--font-display); font-size: 0.72rem;
+    color: var(--accent); border: 1px solid var(--accent); background: var(--accent-soft);
+    border-radius: 999px; padding: 0.18rem 0.7rem; white-space: nowrap;
+  }
+  .xform-grid { display: grid; grid-template-columns: 1fr 2rem 1fr; gap: 0.7rem; align-items: stretch; }
+  .ba { margin: 0; display: flex; flex-direction: column; min-width: 0; }
+  .ba figcaption {
+    font-family: var(--font-display); font-size: 0.66rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 0.45rem;
+  }
+  .ba pre {
+    margin: 0; flex: 1;
+    font-family: var(--font-display); font-size: 0.74rem; line-height: 1.55;
+    background: var(--surface-2);
+    border: 1px solid var(--line); border-left: 3px solid var(--stream);
+    border-radius: 0 8px 8px 0;
+    padding: 0.7rem 0.85rem;
+    overflow-x: auto; color: var(--ink); white-space: pre;
+  }
+  .ba.after pre { border-left-color: var(--accent); }
+  .xarrow { align-self: center; text-align: center; color: var(--accent); font-family: var(--font-display); font-size: 1.15rem; }
+  .xnote { margin: 1rem 0 0; font-size: 0.9rem; color: var(--muted); }
+  .xnote b { color: var(--ink); }
+  .ba .hl { color: var(--accent); font-weight: 600; }
+  .ba .hls { color: var(--stream); font-weight: 600; }
+  .ba .cmt { color: var(--faint); }
+  .data-note { margin: 1.8rem auto 0; max-width: 64ch; text-align: center; }
+
   .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.7s ease, transform 0.7s ease; }
   .reveal.in { opacity: 1; transform: none; }
 
@@ -480,6 +528,8 @@
     .filemap li { grid-template-columns: 1fr; gap: 0.15rem; }
     .incident dl { grid-template-columns: 1fr; gap: 0.15rem 0; }
     .incident dt { margin-top: 0.6rem; }
+    .xform-grid { grid-template-columns: 1fr; gap: 0.6rem; }
+    .xarrow { transform: rotate(90deg); }
   }
 </style>
 
@@ -598,6 +648,15 @@
             <p><span class="algo">Drain algorithm</span> groups identical lines into templates, so you count <em>kinds</em> of errors, not lines. No regex to maintain &mdash; it learns templates from the stream.</p>
           </div>
           <div class="rate"><span class="n">thousands&rarr;few</span>lines to templates</div>
+        </div>
+
+        <div class="band bagg dam reveal">
+          <div class="lid">AGG</div>
+          <div class="body">
+            <h3>Aggregate &mdash; a window, not a layer</h3>
+            <p>A <span class="algo">~1 min dam</span>: bucket the stamped lines by <span class="algo">(service, pattern)</span> and hold them until the window closes, then emit <em>one Alert per pattern</em>. This is where a firehose of lines becomes a trickle of counts.</p>
+          </div>
+          <div class="rate"><span class="n">firehose&rarr;trickle</span>the biggest cut</div>
         </div>
 
         <div class="band b3 reveal">
@@ -721,6 +780,196 @@
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="data">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">Under the hood</p>
+        <h2>The same event, as data, at every step.</h2>
+        <p>Here is one real error from <b>payment-service</b> &mdash; the exact values the bundled demo replays &mdash; and what it looks like <b>before and after</b> each stage transforms it. Blue is what arrives; gold is what changed.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L1</span><h3>Ingest &amp; Filter</h3>
+          <span class="delta">parse &middot; drop non-errors</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; a raw log line off the wire</figcaption>
+<pre>{"timestamp":"2026-04-12T10:03:01Z",
+ "raw":"{\"level\":\"error\",
+   \"msg\":\"payment request failed\",
+   \"paymentID\":\"pay-031\",
+   \"error\":\"connection refused\"}"}</pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; a typed LogLine (kept)</figcaption>
+<pre>LogLine{
+  Service:   "payment-service",
+  Timestamp: 10:03:01,
+  <span class="hl">Level:     "ERROR"</span>  <span class="cmt">&larr; parsed from level</span>
+  Raw:       "…payment request failed…",
+}</pre>
+          </figure>
+        </div>
+        <p class="xnote">The source stamps <b>Service</b> and parses <b>Level</b>. The filter keeps this line because it's an error &mdash; an <span class="mono">INFO</span>/<span class="mono">DEBUG</span>/<span class="mono">WARN</span> line would be <b>dropped here</b> and never seen again.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L2</span><h3>Pattern fingerprint (Drain)</h3>
+          <span class="delta">9 lines &rarr; 1 kind</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; 9 lines, all slightly different</figcaption>
+<pre>…"paymentID":"pay-031"… connection refused
+…"paymentID":"pay-032"… connection refused
+…"paymentID":"pay-033"… connection refused
+   <span class="cmt">( ×9 this window, every ID unique )</span></pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; one shared template</figcaption>
+<pre>PatternID:       "p-a1b2"
+<span class="hl">PatternTemplate:</span>
+  {…,"paymentID":"<span class="hl">&lt;*&gt;</span>",
+     "error":"connection refused"}
+   <span class="cmt">( the varying ID becomes &lt;*&gt; )</span></pre>
+          </figure>
+        </div>
+        <p class="xnote">Drain replaces the parts that vary (the payment ID) with <span class="mono">&lt;*&gt;</span> and recognizes all 9 lines as <b>one kind of error</b>. You now count <em>kinds</em>, not lines &mdash; no regex written by hand.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L3</span><h3>Aggregate + Anomaly detection</h3>
+          <span class="delta">many rows &rarr; 1 Alert</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; counts per window, per pattern</figcaption>
+<pre>window 1: p-a1b2 → count 3   <span class="cmt">baseline</span>
+window 2: p-a1b2 → count 3   <span class="cmt">baseline</span>
+window 3: p-a1b2 → count 2   <span class="cmt">baseline</span>
+window 4: p-a1b2 → <span class="hls">count 9</span>   <span class="cmt">← this one</span></pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; one Alert, flagged</figcaption>
+<pre>Alert{
+  Service: "payment-service",
+  Count:   9,
+  Patterns: [{
+    Template: "…connection refused",
+    <span class="hl">Anomaly:  spike</span>   <span class="cmt">9 ≫ baseline</span>
+    <span class="hl">Baseline: 3.0</span>
+    <span class="hl">ZScore:   6.0</span>
+  }],
+}</pre>
+          </figure>
+        </div>
+        <p class="xnote">The aggregator collapses a window of lines into a single <b>Alert</b>; L3 compares its count to the pattern's own rolling baseline and marks it a <b>spike</b>. The three baseline windows (count ≈3) never exceed the threshold &mdash; they produce <b>no alert and stop here</b>. Only window 4 flows on.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L4</span><h3>Correlator (after fan-in)</h3>
+          <span class="delta">3 Alerts &rarr; 1 Incident</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; 3 alerts on the merged channel</figcaption>
+<pre>Alert{<span class="hls">payment-service</span>, spike,
+      "connection refused"}
+Alert{<span class="hls">order-service</span>,   spike,
+      "timeout calling payment"}
+Alert{<span class="hls">bank-gateway</span>,    spike,
+      "…" }  <span class="cmt">(+ it went silent)</span></pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; one Incident</figcaption>
+<pre>Incident{
+  Services:    [bank-gateway, order-,
+                payment-service],
+  <span class="hl">RootService: "bank-gateway"</span>
+  DepChain:    [bank-gateway →
+                payment → order],
+  Alerts:      [ …3 alerts… ],
+}</pre>
+          </figure>
+        </div>
+        <p class="xnote">Three alerts that co-occur inside the window and are linked in the dependency graph become <b>one incident</b>. The service deepest in the chain &mdash; <span class="mono">bank-gateway</span> &mdash; is pinned as the suspected root cause.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L5</span><h3>LLM diagnosis</h3>
+          <span class="delta">+ root cause, severity, fix</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; the incident, undiagnosed</figcaption>
+<pre>Incident{
+  RootService: "bank-gateway",
+  Alerts:      [ …3 alerts… ],
+  <span class="cmt">Severity:    ""</span>
+  <span class="cmt">Diagnosis:   ""</span>
+  <span class="cmt">Suggestions: []</span>
+}</pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; the model fills it in</figcaption>
+<pre>  <span class="hl">Severity:    "P1"</span>
+  <span class="hl">Diagnosis:</span>   "bank-gateway stopped
+    responding after its v2.3.1
+    deploy; payment &amp; order
+    are cascading off it."
+  <span class="hl">Suggestions:</span> ["Roll bank-gateway
+    back to v2.3.0", …]</pre>
+          </figure>
+        </div>
+        <p class="xnote">The incident, its log samples, the dependency chain and recent deploys go to the model in one prompt. It returns a <b>human root cause</b>, a <b>severity</b>, and a <b>concrete fix</b> &mdash; the whole funnel exists so this call happens only for genuine incidents.</p>
+      </div>
+
+      <div class="xform reveal">
+        <div class="xform-head">
+          <span class="lid">L6</span><h3>Lifecycle &amp; notify</h3>
+          <span class="delta">&rarr; tracked &amp; routed</span>
+        </div>
+        <div class="xform-grid">
+          <figure class="ba before">
+            <figcaption>Before &mdash; a diagnosed incident</figcaption>
+<pre>Incident{
+  Severity: "P1",
+  Diagnosis: "…rollback…",
+  <span class="cmt">Status:    ""</span>
+  <span class="cmt">EventType: ""</span>
+}</pre>
+          </figure>
+          <div class="xarrow" aria-hidden="true">&rarr;</div>
+          <figure class="ba after">
+            <figcaption>After &mdash; a state + a routed message</figcaption>
+<pre>  <span class="hl">Status:    OPEN</span>
+  <span class="hl">EventType: "opened"</span>
+
+<span class="cmt">routed by severity →</span>
+  P1 → Slack #incidents
+       + email + page
+<span class="cmt">later, quiet for resolve_after →</span>
+  <span class="hls">Status: RESOLVED</span></pre>
+          </figure>
+        </div>
+        <p class="xnote">The manager tracks the incident <b>OPEN → ONGOING → RESOLVED</b>, suppresses duplicate pings for the same incident, and routes by severity. When it goes quiet it auto-emits a <b>resolved</b> message &mdash; no human closes the loop.</p>
+      </div>
+
+      <p class="xnote data-note reveal">Every number above is the actual value the demo fixture produces &mdash; run <span class="mono">./log-agent config/config-demo.yaml</span> and watch it happen.</p>
     </div>
   </section>
 
