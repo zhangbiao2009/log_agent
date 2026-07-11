@@ -25,3 +25,6 @@
 {"timestamp":"2026-04-12T10:03:03Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-036\",\"error\":\"connection refused\"}"}
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-037\",\"error\":\"connection refused\"}"}
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"payment request failed\",\"paymentID\":\"pay-038\",\"error\":\"connection refused\"}"}
+
+# ── Tail pause: keep the incident OPEN before EOF/shutdown ───
+{"pause":"6s"}

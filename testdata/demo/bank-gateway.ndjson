@@ -29,3 +29,6 @@
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
 {"timestamp":"2026-04-12T10:03:04Z","raw":"{\"level\":\"error\",\"msg\":\"health check failed\",\"endpoint\":\"https://bank-api.example.com\",\"error\":\"connection reset by peer\"}"}
+
+# ── Tail pause: keep the incident OPEN before EOF/shutdown ───
+{"pause":"6s"}
