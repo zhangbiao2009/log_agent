@@ -1,4 +1,4 @@
-package notify
+package core
 
 import (
 	"crypto/sha256"

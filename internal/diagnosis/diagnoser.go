@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // DiagnoserConfig controls diagnosis behavior.
@@ -33,8 +33,8 @@ func NewDiagnoser(cfg DiagnoserConfig, client LLMClient) *Diagnoser {
 }
 
 // Run consumes incidents and emits enriched incidents with diagnosis.
-func (d *Diagnoser) Run(ctx context.Context, in <-chan notify.Incident) <-chan notify.Incident {
-	out := make(chan notify.Incident, cap(in))
+func (d *Diagnoser) Run(ctx context.Context, in <-chan core.Incident) <-chan core.Incident {
+	out := make(chan core.Incident, cap(in))
 	go func() {
 		defer close(out)
 		for {
@@ -57,7 +57,7 @@ func (d *Diagnoser) Run(ctx context.Context, in <-chan notify.Incident) <-chan n
 	return out
 }
 
-func (d *Diagnoser) diagnose(ctx context.Context, inc notify.Incident) notify.Incident {
+func (d *Diagnoser) diagnose(ctx context.Context, inc core.Incident) core.Incident {
 	prompt := BuildPrompt(inc)
 	response, err := d.client.Complete(ctx, prompt)
 	if err != nil {
@@ -80,7 +80,7 @@ func (d *Diagnoser) diagnose(ctx context.Context, inc notify.Incident) notify.In
 }
 
 // HeuristicSeverity assigns severity based on alert data when the LLM is unavailable.
-func HeuristicSeverity(inc notify.Incident) string {
+func HeuristicSeverity(inc core.Incident) string {
 	// P1: >=3 services or any FATAL alert.
 	if len(inc.Services) >= 3 {
 		return "P1"
@@ -98,7 +98,7 @@ func HeuristicSeverity(inc notify.Incident) string {
 	spikeCount := 0
 	for _, a := range inc.Alerts {
 		for _, p := range a.Patterns {
-			if p.Anomaly == notify.AnomalySpike {
+			if p.Anomaly == core.AnomalySpike {
 				spikeCount++
 			}
 		}

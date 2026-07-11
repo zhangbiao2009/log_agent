@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"github.com/zhangbiao2009/log_agent/internal/ingest"
 )
 
@@ -21,16 +22,6 @@ func severityRank(level string) int {
 		return 0
 	}
 }
-
-type Clock interface {
-	Now() time.Time
-	After(d time.Duration) <-chan time.Time
-}
-
-type realClock struct{}
-
-func (realClock) Now() time.Time                         { return time.Now() }
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 type bucketKey struct {
 	service   string
@@ -76,7 +67,7 @@ func NewAggregator(window time.Duration, minCount int) *Aggregator {
 	return &Aggregator{
 		Window:   window,
 		MinCount: minCount,
-		Clock:    realClock{},
+		Clock:    core.RealClock(),
 	}
 }
 

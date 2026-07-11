@@ -5,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // --- helpers ---
 
-func makeAlert(service string, patterns ...notify.PatternSummary) notify.Alert {
+func makeAlert(service string, patterns ...core.PatternSummary) core.Alert {
 	total := 0
 	for _, p := range patterns {
 		total += p.Count
 	}
-	return notify.Alert{
+	return core.Alert{
 		Service:   service,
 		Level:     "ERROR",
 		Count:     total,
@@ -25,8 +25,8 @@ func makeAlert(service string, patterns ...notify.PatternSummary) notify.Alert {
 	}
 }
 
-func collectAlerts(out <-chan notify.Alert, n int, timeout time.Duration) []notify.Alert {
-	var result []notify.Alert
+func collectAlerts(out <-chan core.Alert, n int, timeout time.Duration) []core.Alert {
+	var result []core.Alert
 	timer := time.After(timeout)
 	for len(result) < n {
 		select {
@@ -42,8 +42,8 @@ func collectAlerts(out <-chan notify.Alert, n int, timeout time.Duration) []noti
 	return result
 }
 
-func drainAll(out <-chan notify.Alert, timeout time.Duration) []notify.Alert {
-	var result []notify.Alert
+func drainAll(out <-chan core.Alert, timeout time.Duration) []core.Alert {
+	var result []core.Alert
 	timer := time.After(timeout)
 	for {
 		select {
@@ -84,10 +84,10 @@ func defaultTestConfig() AnomalyConfig {
 func warmup(t *testing.T, d *AnomalyDetector, patternTemplate string, count, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		in := make(chan notify.Alert, 1)
+		in := make(chan core.Alert, 1)
 		ctx, cancel := context.WithCancel(context.Background())
 		out := d.Run(ctx, in)
-		in <- makeAlert("svc", notify.PatternSummary{
+		in <- makeAlert("svc", core.PatternSummary{
 			Template: patternTemplate,
 			Count:    count,
 			Level:    "ERROR",
@@ -102,7 +102,7 @@ func warmup(t *testing.T, d *AnomalyDetector, patternTemplate string, count, n i
 
 func TestDetector_ClosesOutputWhenInputCloses(t *testing.T) {
 	d := newTestDetector(defaultTestConfig(), NewMemoryStore(), time.Now())
-	in := make(chan notify.Alert)
+	in := make(chan core.Alert)
 	ctx := context.Background()
 	out := d.Run(ctx, in)
 	close(in)
@@ -122,11 +122,11 @@ func TestDetector_ClosesOutputWhenInputCloses(t *testing.T) {
 
 func TestDetector_ClosesOutputOnContextCancel(t *testing.T) {
 	d := newTestDetector(defaultTestConfig(), NewMemoryStore(), time.Now())
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "pat1", Count: 1, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "pat1", Count: 1, Level: "ERROR"})
 	cancel()
 
 	timer := time.After(2 * time.Second)
@@ -144,7 +144,7 @@ func TestDetector_ClosesOutputOnContextCancel(t *testing.T) {
 
 func TestDetector_BufferedOutputSameCapAsInput(t *testing.T) {
 	d := newTestDetector(defaultTestConfig(), NewMemoryStore(), time.Now())
-	in := make(chan notify.Alert, 10)
+	in := make(chan core.Alert, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
@@ -164,12 +164,12 @@ func TestDetector_SuppressesSteadyStateAlert(t *testing.T) {
 	warmup(t, d, "error connecting to <*>", 32, 10)
 
 	// 11th window with same count → should be suppressed
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{
+	in <- makeAlert("svc", core.PatternSummary{
 		Template: "error connecting to <*>",
 		Count:    32,
 		Level:    "ERROR",
@@ -192,15 +192,15 @@ func TestDetector_ForwardsAlertIfAnyPatternAnomalous(t *testing.T) {
 	warmup(t, d, "pat2", 10, 10)
 
 	// Alert with pat1 (steady), pat2 (steady), pat3 (new)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
 	in <- makeAlert("svc",
-		notify.PatternSummary{Template: "pat1", Count: 10, Level: "ERROR"},
-		notify.PatternSummary{Template: "pat2", Count: 10, Level: "ERROR"},
-		notify.PatternSummary{Template: "pat3", Count: 1, Level: "ERROR"}, // new
+		core.PatternSummary{Template: "pat1", Count: 10, Level: "ERROR"},
+		core.PatternSummary{Template: "pat2", Count: 10, Level: "ERROR"},
+		core.PatternSummary{Template: "pat3", Count: 1, Level: "ERROR"}, // new
 	)
 	close(in)
 
@@ -209,7 +209,7 @@ func TestDetector_ForwardsAlertIfAnyPatternAnomalous(t *testing.T) {
 		t.Fatalf("expected 1 alert forwarded, got %d", len(alerts))
 	}
 	a := alerts[0]
-	if a.Patterns[2].Anomaly != notify.AnomalyNewPattern {
+	if a.Patterns[2].Anomaly != core.AnomalyNewPattern {
 		t.Errorf("pat3 anomaly = %v, want AnomalyNewPattern", a.Patterns[2].Anomaly)
 	}
 }
@@ -221,19 +221,19 @@ func TestDetector_FirstObservationIsNewPattern(t *testing.T) {
 	now := time.Now()
 	d := newTestDetector(defaultTestConfig(), store, now)
 
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "never-seen", Count: 5, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "never-seen", Count: 5, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
 	if len(alerts) != 1 {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
-	if alerts[0].Patterns[0].Anomaly != notify.AnomalyNewPattern {
+	if alerts[0].Patterns[0].Anomaly != core.AnomalyNewPattern {
 		t.Errorf("anomaly = %v, want AnomalyNewPattern", alerts[0].Patterns[0].Anomaly)
 	}
 }
@@ -251,19 +251,19 @@ func TestDetector_PatternReappearsAfterGrace(t *testing.T) {
 
 	d := newTestDetector(defaultTestConfig(), store, now)
 
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "old-pattern", Count: 5, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "old-pattern", Count: 5, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
 	if len(alerts) != 1 {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
-	if alerts[0].Patterns[0].Anomaly != notify.AnomalyNewPattern {
+	if alerts[0].Patterns[0].Anomaly != core.AnomalyNewPattern {
 		t.Errorf("anomaly = %v, want AnomalyNewPattern", alerts[0].Patterns[0].Anomaly)
 	}
 }
@@ -279,12 +279,12 @@ func TestDetector_SpikeAnnotatedOnPatternSummary(t *testing.T) {
 	warmup(t, d, "spike-test", 32, 10)
 
 	// Send count=200 → should spike
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "spike-test", Count: 200, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "spike-test", Count: 200, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
@@ -292,7 +292,7 @@ func TestDetector_SpikeAnnotatedOnPatternSummary(t *testing.T) {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 	ps := alerts[0].Patterns[0]
-	if ps.Anomaly != notify.AnomalySpike {
+	if ps.Anomaly != core.AnomalySpike {
 		t.Errorf("anomaly = %v, want AnomalySpike", ps.Anomaly)
 	}
 	if ps.ZScore <= 3.0 {
@@ -315,12 +315,12 @@ func TestDetector_NoSpikeBeforeMinSamples(t *testing.T) {
 	warmup(t, d, "warmup-pat", 32, 3)
 
 	// Send count=200 — should NOT be spike (only NewPattern on first window)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "warmup-pat", Count: 200, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "warmup-pat", Count: 200, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
@@ -329,7 +329,7 @@ func TestDetector_NoSpikeBeforeMinSamples(t *testing.T) {
 	// → should be suppressed
 	for _, a := range alerts {
 		for _, ps := range a.Patterns {
-			if ps.Anomaly == notify.AnomalySpike {
+			if ps.Anomaly == core.AnomalySpike {
 				t.Errorf("unexpected spike before minSamples: %+v", ps)
 			}
 		}
@@ -361,12 +361,12 @@ func TestDetector_RateJumpDetected(t *testing.T) {
 	d = newTestDetector(cfg, store, now)
 
 	// Send count=55 (5.5× mean, above factor=5)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "ratejump-pat", Count: 55, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "ratejump-pat", Count: 55, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
@@ -374,7 +374,7 @@ func TestDetector_RateJumpDetected(t *testing.T) {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 	ps := alerts[0].Patterns[0]
-	if ps.Anomaly != notify.AnomalyRateJump {
+	if ps.Anomaly != core.AnomalyRateJump {
 		t.Errorf("anomaly = %v, want AnomalyRateJump", ps.Anomaly)
 	}
 }
@@ -388,19 +388,19 @@ func TestDetector_NoRateJumpBelowFactor(t *testing.T) {
 	warmup(t, d, "noratejump-pat", 10, 10)
 
 	// Send count=30 (3× mean, below factor=5)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "noratejump-pat", Count: 30, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "noratejump-pat", Count: 30, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
 	// Could be spike or suppressed. Should NOT be RateJump.
 	for _, a := range alerts {
 		for _, ps := range a.Patterns {
-			if ps.Anomaly == notify.AnomalyRateJump {
+			if ps.Anomaly == core.AnomalyRateJump {
 				t.Errorf("unexpected RateJump for count=30 with mean=10")
 			}
 		}
@@ -456,12 +456,12 @@ func TestDetector_SpikeWinsOverRateJump(t *testing.T) {
 	warmup(t, d, "priority-test", 10, 10)
 
 	// Send count=200: satisfies both Spike (200 > 10+3*stddev) AND RateJump (200 > 5*10=50)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
-	in <- makeAlert("svc", notify.PatternSummary{Template: "priority-test", Count: 200, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: "priority-test", Count: 200, Level: "ERROR"})
 	close(in)
 
 	alerts := drainAll(out, 1*time.Second)
@@ -469,7 +469,7 @@ func TestDetector_SpikeWinsOverRateJump(t *testing.T) {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 	ps := alerts[0].Patterns[0]
-	if ps.Anomaly != notify.AnomalySpike {
+	if ps.Anomaly != core.AnomalySpike {
 		t.Errorf("anomaly = %v, want AnomalySpike (Spike > RateJump priority)", ps.Anomaly)
 	}
 }
@@ -479,13 +479,13 @@ func TestDetector_Phase1AlertsForwardedAsIs(t *testing.T) {
 	now := time.Now()
 	d := newTestDetector(defaultTestConfig(), store, now)
 
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
 	// Phase 1 alert: no patterns
-	in <- notify.Alert{
+	in <- core.Alert{
 		Service:     "svc",
 		Level:       "ERROR",
 		Count:       5,
@@ -523,19 +523,19 @@ func TestDetector_EndToEnd_SteadyThenSpike(t *testing.T) {
 	warmup(t, d, pat, 32, 20)
 
 	// Phase 2: 5 more steady windows → all suppressed
-	in := make(chan notify.Alert, 10)
+	in := make(chan core.Alert, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := d.Run(ctx, in)
 
 	for i := 0; i < 5; i++ {
-		in <- makeAlert("svc", notify.PatternSummary{Template: pat, Count: 32, Level: "ERROR"})
+		in <- makeAlert("svc", core.PatternSummary{Template: pat, Count: 32, Level: "ERROR"})
 	}
 	// 1 spike
-	in <- makeAlert("svc", notify.PatternSummary{Template: pat, Count: 200, Level: "ERROR"})
+	in <- makeAlert("svc", core.PatternSummary{Template: pat, Count: 200, Level: "ERROR"})
 	// 3 more steady
 	for i := 0; i < 3; i++ {
-		in <- makeAlert("svc", notify.PatternSummary{Template: pat, Count: 32, Level: "ERROR"})
+		in <- makeAlert("svc", core.PatternSummary{Template: pat, Count: 32, Level: "ERROR"})
 	}
 	close(in)
 
@@ -544,7 +544,7 @@ func TestDetector_EndToEnd_SteadyThenSpike(t *testing.T) {
 		t.Fatalf("expected exactly 1 spike alert, got %d", len(alerts))
 	}
 	ps := alerts[0].Patterns[0]
-	if ps.Anomaly != notify.AnomalySpike {
+	if ps.Anomaly != core.AnomalySpike {
 		t.Errorf("anomaly = %v, want AnomalySpike", ps.Anomaly)
 	}
 	if ps.ZScore <= 3.0 {
@@ -566,15 +566,15 @@ func BenchmarkDetector_Ingest(b *testing.B) {
 	}
 
 	// Build a representative alert with 10 patterns
-	patterns := make([]notify.PatternSummary, 10)
+	patterns := make([]core.PatternSummary, 10)
 	for i := range patterns {
-		patterns[i] = notify.PatternSummary{
+		patterns[i] = core.PatternSummary{
 			Template: "pattern-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i/26%10)),
 			Count:    50 + i,
 			Level:    "ERROR",
 		}
 	}
-	alert := notify.Alert{
+	alert := core.Alert{
 		Service:  "bench-svc",
 		Level:    "ERROR",
 		Count:    500,

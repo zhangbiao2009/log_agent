@@ -5,31 +5,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
-func makeTestIncident(services ...string) notify.Incident {
-	var alerts []notify.Alert
+func makeTestIncident(services ...string) core.Incident {
+	var alerts []core.Alert
 	for _, svc := range services {
-		alerts = append(alerts, notify.Alert{
+		alerts = append(alerts, core.Alert{
 			Service:   svc,
 			Level:     "ERROR",
 			Count:     10,
 			Window:    1 * time.Minute,
 			Timestamp: time.Date(2026, 4, 12, 14, 30, 0, 0, time.UTC),
-			Patterns: []notify.PatternSummary{
+			Patterns: []core.PatternSummary{
 				{
 					Template:    "connection refused to <*>:<*>",
 					Count:       10,
 					Level:       "ERROR",
 					SampleLines: []string{"connection refused to host:443"},
-					Anomaly:     notify.AnomalySpike,
+					Anomaly:     core.AnomalySpike,
 					ZScore:      5.2,
 				},
 			},
 		})
 	}
-	inc := notify.Incident{
+	inc := core.Incident{
 		ID:       "test123",
 		Services: services,
 		Alerts:   alerts,
@@ -73,7 +73,7 @@ func TestBuildPrompt_ContainsDepChain(t *testing.T) {
 
 func TestBuildPrompt_ContainsPatternTemplates(t *testing.T) {
 	inc := makeTestIncident("svc-a")
-	inc.Alerts[0].Patterns = []notify.PatternSummary{
+	inc.Alerts[0].Patterns = []core.PatternSummary{
 		{Template: "connection refused to <*>:<*>", Count: 10, Level: "ERROR"},
 		{Template: "timeout calling <*>", Count: 5, Level: "ERROR"},
 	}
@@ -103,9 +103,9 @@ func TestBuildPrompt_ContainsSampleLines(t *testing.T) {
 
 func TestBuildPrompt_ContainsAnomalyTags(t *testing.T) {
 	inc := makeTestIncident("svc-a")
-	inc.Alerts[0].Patterns = []notify.PatternSummary{
-		{Template: "spike pattern", Count: 10, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 5.2},
-		{Template: "new pattern", Count: 1, Level: "WARN", Anomaly: notify.AnomalyNewPattern},
+	inc.Alerts[0].Patterns = []core.PatternSummary{
+		{Template: "spike pattern", Count: 10, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 5.2},
+		{Template: "new pattern", Count: 1, Level: "WARN", Anomaly: core.AnomalyNewPattern},
 	}
 	prompt := BuildPrompt(inc)
 	if !strings.Contains(prompt, "SPIKE") {

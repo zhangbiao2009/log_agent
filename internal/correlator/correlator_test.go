@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"github.com/zhangbiao2009/log_agent/internal/testutil"
 )
 
@@ -20,8 +20,8 @@ func testGraph() *DependencyGraph {
 	})
 }
 
-func makeAlert(service string, patterns ...notify.PatternSummary) notify.Alert {
-	return notify.Alert{
+func makeAlert(service string, patterns ...core.PatternSummary) core.Alert {
+	return core.Alert{
 		Service:   service,
 		Level:     "ERROR",
 		Count:     10,
@@ -31,9 +31,9 @@ func makeAlert(service string, patterns ...notify.PatternSummary) notify.Alert {
 	}
 }
 
-func collectIncidents(t *testing.T, out <-chan notify.Incident, n int, timeout time.Duration) []notify.Incident {
+func collectIncidents(t *testing.T, out <-chan core.Incident, n int, timeout time.Duration) []core.Incident {
 	t.Helper()
-	var result []notify.Incident
+	var result []core.Incident
 	timer := time.After(timeout)
 	for i := 0; i < n; i++ {
 		select {
@@ -49,8 +49,8 @@ func collectIncidents(t *testing.T, out <-chan notify.Incident, n int, timeout t
 	return result
 }
 
-func drainIncidents(out <-chan notify.Incident, timeout time.Duration) []notify.Incident {
-	var result []notify.Incident
+func drainIncidents(out <-chan core.Incident, timeout time.Duration) []core.Incident {
+	var result []core.Incident
 	timer := time.After(timeout)
 	for {
 		select {
@@ -76,7 +76,7 @@ func newTestCorrelator(g *DependencyGraph, clk *testutil.FakeClock) *Correlator 
 func TestCorrelator_ClosesOutputWhenInputCloses(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert)
+	in := make(chan core.Alert)
 	out := c.Run(context.Background(), in)
 	close(in)
 	select {
@@ -96,7 +96,7 @@ func TestCorrelator_ClosesOutputOnContextCancel(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
 	ctx, cancel := context.WithCancel(context.Background())
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	in <- makeAlert("A")
 	out := c.Run(ctx, in)
 	cancel()
@@ -113,7 +113,7 @@ func TestCorrelator_ClosesOutputOnContextCancel(t *testing.T) {
 func TestCorrelator_BufferedOutput(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert)
+	in := make(chan core.Alert)
 	out := c.Run(context.Background(), in)
 	close(in)
 	for range out {
@@ -129,7 +129,7 @@ func TestCorrelator_BufferedOutput(t *testing.T) {
 func TestCorrelator_SingleAlertBecomesIncident(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	// Let the goroutine pick up the alert.
@@ -152,11 +152,11 @@ func TestCorrelator_SingleAlertBecomesIncident(t *testing.T) {
 func TestCorrelator_MultipleAlertsFromSameService(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
-	in <- makeAlert("A", notify.PatternSummary{Template: "t1", Count: 1, Level: "ERROR"})
-	in <- makeAlert("A", notify.PatternSummary{Template: "t2", Count: 2, Level: "ERROR"})
-	in <- makeAlert("A", notify.PatternSummary{Template: "t3", Count: 3, Level: "ERROR"})
+	in <- makeAlert("A", core.PatternSummary{Template: "t1", Count: 1, Level: "ERROR"})
+	in <- makeAlert("A", core.PatternSummary{Template: "t2", Count: 2, Level: "ERROR"})
+	in <- makeAlert("A", core.PatternSummary{Template: "t3", Count: 3, Level: "ERROR"})
 	runtime.Gosched()
 	time.Sleep(10 * time.Millisecond)
 	clk.Advance(6 * time.Second)
@@ -184,7 +184,7 @@ func TestCorrelator_MultipleAlertsFromSameService(t *testing.T) {
 func TestCorrelator_UnknownServiceNotInGraph(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("X") // X not in graph
 	runtime.Gosched()
@@ -209,7 +209,7 @@ func TestCorrelator_RelatedServicesGrouped(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	g := NewDependencyGraph(map[string][]string{"A": {"B"}, "B": {"D"}})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 2)
+	in := make(chan core.Alert, 2)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("D")
@@ -232,7 +232,7 @@ func TestCorrelator_UnrelatedServicesNotGrouped(t *testing.T) {
 		"C": {"D"},
 	})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 2)
+	in := make(chan core.Alert, 2)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("D")
@@ -252,7 +252,7 @@ func TestCorrelator_ThreeServiceIncident(t *testing.T) {
 		"B": {"C"},
 	})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("B")
@@ -280,7 +280,7 @@ func TestCorrelator_TransitiveDependencyGrouped(t *testing.T) {
 		"B": {"C"},
 	})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 2)
+	in := make(chan core.Alert, 2)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A") // depth 0
 	in <- makeAlert("C") // depth 2 (connected through B)
@@ -300,7 +300,7 @@ func TestCorrelator_DepChainFanOut(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	g := NewDependencyGraph(map[string][]string{"A": {"B", "C"}})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("B")
@@ -328,7 +328,7 @@ func TestCorrelator_RootCauseIsDeepestService(t *testing.T) {
 		"B": {"C"},
 	})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("B")
@@ -346,13 +346,13 @@ func TestCorrelator_RootCauseTieBreakByZScore(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	g := NewDependencyGraph(map[string][]string{"A": {"B", "C"}})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	// B at depth 1, ZScore=5.0
-	in <- makeAlert("B", notify.PatternSummary{Template: "t1", Count: 100, Level: "ERROR", ZScore: 5.0})
+	in <- makeAlert("B", core.PatternSummary{Template: "t1", Count: 100, Level: "ERROR", ZScore: 5.0})
 	// C at depth 1, ZScore=2.0
-	in <- makeAlert("C", notify.PatternSummary{Template: "t2", Count: 50, Level: "ERROR", ZScore: 2.0})
+	in <- makeAlert("C", core.PatternSummary{Template: "t2", Count: 50, Level: "ERROR", ZScore: 2.0})
 	runtime.Gosched()
 	time.Sleep(10 * time.Millisecond)
 	clk.Advance(6 * time.Second)
@@ -365,7 +365,7 @@ func TestCorrelator_RootCauseTieBreakByZScore(t *testing.T) {
 func TestCorrelator_RootCauseSingleService(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("X") // unknown service
 	runtime.Gosched()
@@ -382,7 +382,7 @@ func TestCorrelator_RootCauseSingleService(t *testing.T) {
 func TestCorrelator_AlertsInDifferentWindowsSeparated(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert, 2)
+	in := make(chan core.Alert, 2)
 	out := c.Run(context.Background(), in)
 	// Window 1: alert for A.
 	in <- makeAlert("A")
@@ -409,7 +409,7 @@ func TestCorrelator_FlushOnInputClose(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	g := NewDependencyGraph(map[string][]string{"A": {"B"}})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 2)
+	in := make(chan core.Alert, 2)
 	out := c.Run(context.Background(), in)
 	in <- makeAlert("A")
 	in <- makeAlert("B")
@@ -426,7 +426,7 @@ func TestCorrelator_FlushOnInputClose(t *testing.T) {
 func TestCorrelator_EmptyWindowNoIncident(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Now())
 	c := newTestCorrelator(testGraph(), clk)
-	in := make(chan notify.Alert)
+	in := make(chan core.Alert)
 	out := c.Run(context.Background(), in)
 	// Advance past window with no alerts.
 	clk.Advance(6 * time.Second)
@@ -449,31 +449,31 @@ func TestCorrelator_EndToEnd_CascadingFailure(t *testing.T) {
 		"payment-svc": {"bank-gw"},
 	})
 	c := newTestCorrelator(g, clk)
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := c.Run(context.Background(), in)
 
-	in <- notify.Alert{
+	in <- core.Alert{
 		Service:   "bank-gw",
 		Level:     "FATAL",
 		Count:     0,
 		Window:    5 * time.Second,
-		Patterns:  []notify.PatternSummary{{Template: "service unreachable", Count: 0, Level: "FATAL", Anomaly: notify.AnomalyNewPattern}},
+		Patterns:  []core.PatternSummary{{Template: "service unreachable", Count: 0, Level: "FATAL", Anomaly: core.AnomalyNewPattern}},
 		Timestamp: time.Date(2026, 4, 12, 10, 0, 1, 0, time.UTC),
 	}
-	in <- notify.Alert{
+	in <- core.Alert{
 		Service:   "payment-svc",
 		Level:     "ERROR",
 		Count:     200,
 		Window:    5 * time.Second,
-		Patterns:  []notify.PatternSummary{{Template: "connection refused", Count: 200, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 12.3}},
+		Patterns:  []core.PatternSummary{{Template: "connection refused", Count: 200, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 12.3}},
 		Timestamp: time.Date(2026, 4, 12, 10, 0, 2, 0, time.UTC),
 	}
-	in <- notify.Alert{
+	in <- core.Alert{
 		Service:   "order-svc",
 		Level:     "ERROR",
 		Count:     50,
 		Window:    5 * time.Second,
-		Patterns:  []notify.PatternSummary{{Template: "timeout calling payment", Count: 50, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 8.1}},
+		Patterns:  []core.PatternSummary{{Template: "timeout calling payment", Count: 50, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 8.1}},
 		Timestamp: time.Date(2026, 4, 12, 10, 0, 3, 0, time.UTC),
 	}
 
@@ -508,7 +508,7 @@ func TestCorrelator_EndToEnd_CascadingFailure(t *testing.T) {
 		t.Error("ID is empty")
 	}
 	// Run ID generation again to verify determinism.
-	id2 := notify.GenerateIncidentID(inc.Services, inc.OpenedAt, inc.Window)
+	id2 := core.GenerateIncidentID(inc.Services, inc.OpenedAt, inc.Window)
 	if inc.ID != id2 {
 		t.Errorf("ID not deterministic: %q != %q", inc.ID, id2)
 	}

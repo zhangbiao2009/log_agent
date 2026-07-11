@@ -3,13 +3,13 @@ package correlator
 import (
 	"context"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // WrapAlerts is the bypass path when the correlator is disabled.
 // Each alert becomes a single-alert Incident with no correlation metadata.
-func WrapAlerts(ctx context.Context, in <-chan notify.Alert) <-chan notify.Incident {
-	out := make(chan notify.Incident, cap(in))
+func WrapAlerts(ctx context.Context, in <-chan core.Alert) <-chan core.Incident {
+	out := make(chan core.Incident, cap(in))
 	go func() {
 		defer close(out)
 		for {
@@ -20,8 +20,8 @@ func WrapAlerts(ctx context.Context, in <-chan notify.Alert) <-chan notify.Incid
 				if !ok {
 					return
 				}
-				inc := notify.Incident{
-					Alerts:   []notify.Alert{alert},
+				inc := core.Incident{
+					Alerts:   []core.Alert{alert},
 					Services: []string{alert.Service},
 					OpenedAt: alert.Timestamp,
 					Window:   alert.Window,

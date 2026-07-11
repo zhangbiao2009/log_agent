@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 func TestWrapAlerts_SingleAlert(t *testing.T) {
-	in := make(chan notify.Alert, 1)
+	in := make(chan core.Alert, 1)
 	out := WrapAlerts(context.Background(), in)
-	alert := notify.Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, Timestamp: time.Now()}
+	alert := core.Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, Timestamp: time.Now()}
 	in <- alert
 	close(in)
-	var incs []notify.Incident
+	var incs []core.Incident
 	for inc := range out {
 		incs = append(incs, inc)
 	}
@@ -37,13 +37,13 @@ func TestWrapAlerts_SingleAlert(t *testing.T) {
 }
 
 func TestWrapAlerts_MultipleAlerts(t *testing.T) {
-	in := make(chan notify.Alert, 3)
+	in := make(chan core.Alert, 3)
 	out := WrapAlerts(context.Background(), in)
 	for _, svc := range []string{"svc-A", "svc-B", "svc-C"} {
-		in <- notify.Alert{Service: svc, Level: "ERROR", Count: 1, Window: time.Minute, Timestamp: time.Now()}
+		in <- core.Alert{Service: svc, Level: "ERROR", Count: 1, Window: time.Minute, Timestamp: time.Now()}
 	}
 	close(in)
-	var incs []notify.Incident
+	var incs []core.Incident
 	for inc := range out {
 		incs = append(incs, inc)
 	}
@@ -59,7 +59,7 @@ func TestWrapAlerts_MultipleAlerts(t *testing.T) {
 }
 
 func TestWrapAlerts_ClosesOnInputClose(t *testing.T) {
-	in := make(chan notify.Alert)
+	in := make(chan core.Alert)
 	out := WrapAlerts(context.Background(), in)
 	close(in)
 	select {

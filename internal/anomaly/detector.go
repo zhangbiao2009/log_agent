@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // AnomalyConfig controls the anomaly detection thresholds.
@@ -45,7 +45,7 @@ func (c *AnomalyConfig) setDefaults() {
 type AnomalyDetector struct {
 	config AnomalyConfig
 	store  BaselineStore
-	Clock  notify.Clock // exported for test injection; defaults to real clock
+	Clock  core.Clock // exported for test injection; defaults to real clock
 }
 
 func NewAnomalyDetector(cfg AnomalyConfig, store BaselineStore) *AnomalyDetector {
@@ -65,8 +65,8 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 // Run consumes Alerts from in, annotates PatternSummary entries, and emits
 // only anomalous alerts to the returned channel.
 // The output channel is closed when ctx is done or in is closed.
-func (d *AnomalyDetector) Run(ctx context.Context, in <-chan notify.Alert) <-chan notify.Alert {
-	out := make(chan notify.Alert, cap(in))
+func (d *AnomalyDetector) Run(ctx context.Context, in <-chan core.Alert) <-chan core.Alert {
+	out := make(chan core.Alert, cap(in))
 	go func() {
 		defer close(out)
 		for {
@@ -95,7 +95,7 @@ func (d *AnomalyDetector) Run(ctx context.Context, in <-chan notify.Alert) <-cha
 // evaluate annotates all PatternSummary entries and reports whether any are anomalous.
 // Alerts with no patterns (Phase 1 mode) are returned unchanged with hasAnomaly=true
 // so they pass through to the dispatcher.
-func (d *AnomalyDetector) evaluate(alert notify.Alert) (notify.Alert, bool) {
+func (d *AnomalyDetector) evaluate(alert core.Alert) (core.Alert, bool) {
 	if len(alert.Patterns) == 0 {
 		return alert, true
 	}
@@ -115,19 +115,19 @@ func (d *AnomalyDetector) evaluate(alert notify.Alert) (notify.Alert, bool) {
 		preStddev := baseline.Stddev()
 
 		// Classify using pre-update baseline.
-		var kind notify.AnomalyKind
+		var kind core.AnomalyKind
 		switch {
 		case baseline.IsNewPattern(d.config.NewPatternGrace, now):
-			kind = notify.AnomalyNewPattern
+			kind = core.AnomalyNewPattern
 		case baseline.IsSpike(ps.Count, d.config.SpikeMultiplier, d.config.MinSamples):
-			kind = notify.AnomalySpike
+			kind = core.AnomalySpike
 		case baseline.IsRateJump(ps.Count, d.config.RateJumpFactor, d.config.MinSamples):
-			kind = notify.AnomalyRateJump
+			kind = core.AnomalyRateJump
 		default:
-			kind = notify.AnomalyNone
+			kind = core.AnomalyNone
 		}
 
-		if kind != notify.AnomalyNone {
+		if kind != core.AnomalyNone {
 			hasAnomaly = true
 			slog.Debug("anomaly detected",
 				"service", alert.Service,

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // CorrelatorConfig controls correlation behavior.
@@ -19,7 +19,7 @@ type CorrelatorConfig struct {
 type Correlator struct {
 	config CorrelatorConfig
 	graph  *DependencyGraph
-	Clock  notify.Clock
+	Clock  core.Clock
 }
 
 // NewCorrelator creates a Correlator with defaults applied.
@@ -41,11 +41,11 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 
 // Run consumes anomalous alerts and emits correlated incidents.
 // Flush happens on every Window tick or when the input channel closes.
-func (c *Correlator) Run(ctx context.Context, in <-chan notify.Alert) <-chan notify.Incident {
-	out := make(chan notify.Incident, 100)
+func (c *Correlator) Run(ctx context.Context, in <-chan core.Alert) <-chan core.Incident {
+	out := make(chan core.Incident, 100)
 	go func() {
 		defer close(out)
-		var buffer []notify.Alert
+		var buffer []core.Alert
 		timer := c.Clock.After(c.config.Window)
 		for {
 			select {
@@ -69,7 +69,7 @@ func (c *Correlator) Run(ctx context.Context, in <-chan notify.Alert) <-chan not
 }
 
 // flush groups buffered alerts by connected component and emits incidents.
-func (c *Correlator) flush(alerts []notify.Alert, out chan<- notify.Incident) {
+func (c *Correlator) flush(alerts []core.Alert, out chan<- core.Incident) {
 	if len(alerts) == 0 {
 		return
 	}
@@ -78,7 +78,7 @@ func (c *Correlator) flush(alerts []notify.Alert, out chan<- notify.Incident) {
 
 	// Group alerts by component.
 	type group struct {
-		alerts []notify.Alert
+		alerts []core.Alert
 	}
 	groups := make(map[int]*group)
 	unknownID := -1
@@ -87,7 +87,7 @@ func (c *Correlator) flush(alerts []notify.Alert, out chan<- notify.Incident) {
 		compID := c.graph.Component(a.Service)
 		if compID < 0 {
 			// Service not in graph → its own group.
-			groups[unknownID] = &group{alerts: []notify.Alert{a}}
+			groups[unknownID] = &group{alerts: []core.Alert{a}}
 			unknownID--
 			continue
 		}
@@ -106,7 +106,7 @@ func (c *Correlator) flush(alerts []notify.Alert, out chan<- notify.Incident) {
 }
 
 // buildIncident creates an Incident from a group of correlated alerts.
-func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.Incident {
+func (c *Correlator) buildIncident(alerts []core.Alert, now time.Time) core.Incident {
 	// Collect services and find earliest timestamp.
 	serviceSet := make(map[string]bool)
 	var earliest time.Time
@@ -125,7 +125,7 @@ func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.
 
 	// Single service not in graph → no correlation metadata.
 	if len(services) == 1 && c.graph.Component(services[0]) < 0 {
-		return notify.Incident{
+		return core.Incident{
 			Alerts:   alerts,
 			Services: services,
 			OpenedAt: earliest,
@@ -135,7 +135,7 @@ func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.
 
 	// Find root cause: deepest service by BFS depth.
 	// Tie-break by max ZScore, then alphabetically.
-	alertByService := make(map[string]notify.Alert)
+	alertByService := make(map[string]core.Alert)
 	for _, a := range alerts {
 		alertByService[a.Service] = a
 	}
@@ -173,7 +173,7 @@ func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.
 		depChain[i] = s.svc
 	}
 
-	id := notify.GenerateIncidentID(services, earliest, c.config.Window)
+	id := core.GenerateIncidentID(services, earliest, c.config.Window)
 
 	slog.Info("incident created",
 		"id", id,
@@ -182,7 +182,7 @@ func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.
 		"dep_chain", depChain,
 	)
 
-	return notify.Incident{
+	return core.Incident{
 		ID:          id,
 		Services:    services,
 		RootService: root,
@@ -194,7 +194,7 @@ func (c *Correlator) buildIncident(alerts []notify.Alert, now time.Time) notify.
 }
 
 // maxZScore returns the maximum ZScore across all patterns in an alert.
-func maxZScore(a notify.Alert) float64 {
+func maxZScore(a core.Alert) float64 {
 	var max float64
 	for _, p := range a.Patterns {
 		if p.ZScore > max {

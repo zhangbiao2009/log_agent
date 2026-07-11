@@ -7,16 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // MockLLM implements LLMClient for testing.
 type MockLLM struct {
-	Response      string
-	Err           error
+	Response       string
+	Err            error
 	CapturedPrompt string
-	CallCount     int
-	Block         chan struct{} // if non-nil, Complete blocks until closed or ctx cancelled
+	CallCount      int
+	Block          chan struct{} // if non-nil, Complete blocks until closed or ctx cancelled
 }
 
 func (m *MockLLM) Complete(ctx context.Context, prompt string) (string, error) {
@@ -32,28 +32,28 @@ func (m *MockLLM) Complete(ctx context.Context, prompt string) (string, error) {
 	return m.Response, m.Err
 }
 
-func makeIncident(services ...string) notify.Incident {
-	var alerts []notify.Alert
+func makeIncident(services ...string) core.Incident {
+	var alerts []core.Alert
 	for _, svc := range services {
-		alerts = append(alerts, notify.Alert{
+		alerts = append(alerts, core.Alert{
 			Service:   svc,
 			Level:     "ERROR",
 			Count:     10,
 			Window:    1 * time.Minute,
 			Timestamp: time.Date(2026, 4, 12, 14, 30, 0, 0, time.UTC),
-			Patterns: []notify.PatternSummary{
+			Patterns: []core.PatternSummary{
 				{
 					Template:    "connection refused to <*>:<*>",
 					Count:       10,
 					Level:       "ERROR",
 					SampleLines: []string{"connection refused to host:443"},
-					Anomaly:     notify.AnomalySpike,
+					Anomaly:     core.AnomalySpike,
 					ZScore:      5.2,
 				},
 			},
 		})
 	}
-	inc := notify.Incident{
+	inc := core.Incident{
 		ID:       "test123",
 		Services: services,
 		Alerts:   alerts,
@@ -67,8 +67,8 @@ func makeIncident(services ...string) notify.Incident {
 	return inc
 }
 
-func collectIncidents(out <-chan notify.Incident, n int, timeout time.Duration) []notify.Incident {
-	var results []notify.Incident
+func collectIncidents(out <-chan core.Incident, n int, timeout time.Duration) []core.Incident {
+	var results []core.Incident
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for i := 0; i < n; i++ {
@@ -90,7 +90,7 @@ func collectIncidents(out <-chan notify.Incident, n int, timeout time.Duration) 
 func TestDiagnoser_ClosesOutputWhenInputCloses(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P3\nDIAGNOSIS: ok"}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident)
+	in := make(chan core.Incident)
 	close(in)
 	out := d.Run(context.Background(), in)
 	// Output should close.
@@ -111,7 +111,7 @@ func TestDiagnoser_ClosesOutputOnContextCancel(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P1\nDIAGNOSIS: test", Block: block}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
 	ctx, cancel := context.WithCancel(context.Background())
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("svc-a")
 	out := d.Run(ctx, in)
 	// Cancel while LLM is blocked.
@@ -135,7 +135,7 @@ func TestDiagnoser_ClosesOutputOnContextCancel(t *testing.T) {
 func TestDiagnoser_PassesThroughAllIncidents(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P2\nDIAGNOSIS: ok\nSUGGESTIONS:\n- fix"}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident, 3)
+	in := make(chan core.Incident, 3)
 	in <- makeIncident("svc-a")
 	in <- makeIncident("svc-b")
 	in <- makeIncident("svc-c")
@@ -155,7 +155,7 @@ func TestDiagnoser_PassesThroughAllIncidents(t *testing.T) {
 func TestDiagnoser_SetsDiagnosisField(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P1\nDIAGNOSIS: root cause explanation\nSUGGESTIONS:\n- fix"}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("svc-a")
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -171,7 +171,7 @@ func TestDiagnoser_SetsDiagnosisField(t *testing.T) {
 func TestDiagnoser_SetsSeverityField(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P1\nDIAGNOSIS: test"}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("svc-a")
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -184,7 +184,7 @@ func TestDiagnoser_SetsSeverityField(t *testing.T) {
 func TestDiagnoser_SetsSuggestionsField(t *testing.T) {
 	mock := &MockLLM{Response: "SEVERITY: P2\nDIAGNOSIS: test\nSUGGESTIONS:\n- action 1\n- action 2\n- action 3"}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("svc-a")
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -199,7 +199,7 @@ func TestDiagnoser_SetsSuggestionsField(t *testing.T) {
 func TestDiagnoser_LLMErrorFallbackDiagnosis(t *testing.T) {
 	mock := &MockLLM{Err: errors.New("connection refused")}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("svc-a")
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -222,7 +222,7 @@ func TestDiagnoser_LLMErrorPreservesExistingFields(t *testing.T) {
 	mock := &MockLLM{Err: errors.New("api error")}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
 	inc := makeIncident("svc-a", "svc-b")
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- inc
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -246,7 +246,7 @@ func TestDiagnoser_HeuristicSeverityP1(t *testing.T) {
 	mock := &MockLLM{Err: errors.New("fail")}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
 	inc := makeIncident("svc-a", "svc-b", "svc-c")
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- inc
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -260,7 +260,7 @@ func TestDiagnoser_HeuristicSeverityP2(t *testing.T) {
 	mock := &MockLLM{Err: errors.New("fail")}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
 	inc := makeIncident("svc-a", "svc-b")
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- inc
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -277,7 +277,7 @@ func TestDiagnoser_HeuristicSeverityP3(t *testing.T) {
 	// Override to non-FATAL, no spikes.
 	inc.Alerts[0].Level = "ERROR"
 	inc.Alerts[0].Patterns = nil
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- inc
 	close(in)
 	out := d.Run(context.Background(), in)
@@ -302,31 +302,31 @@ SUGGESTIONS:
 	mock := &MockLLM{Response: cannedResponse}
 	d := NewDiagnoser(DiagnoserConfig{}, mock)
 
-	inc := notify.Incident{
+	inc := core.Incident{
 		ID:          "e2e-test",
 		Services:    []string{"bank-gw", "payment-svc", "order-svc"},
 		RootService: "bank-gw",
 		DepChain:    []string{"bank-gw", "payment-svc", "order-svc"},
-		Alerts: []notify.Alert{
+		Alerts: []core.Alert{
 			{
 				Service: "bank-gw", Level: "ERROR", Count: 50, Window: time.Minute,
 				Timestamp: time.Date(2026, 4, 12, 14, 30, 0, 0, time.UTC),
-				Patterns: []notify.PatternSummary{
-					{Template: "connection refused <*>:<*>", Count: 50, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 8.1, SampleLines: []string{"connection refused bank-gw:443"}},
+				Patterns: []core.PatternSummary{
+					{Template: "connection refused <*>:<*>", Count: 50, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 8.1, SampleLines: []string{"connection refused bank-gw:443"}},
 				},
 			},
 			{
 				Service: "payment-svc", Level: "ERROR", Count: 30, Window: time.Minute,
 				Timestamp: time.Date(2026, 4, 12, 14, 30, 0, 0, time.UTC),
-				Patterns: []notify.PatternSummary{
-					{Template: "timeout calling bank-gw", Count: 30, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 6.3, SampleLines: []string{"timeout calling bank-gw"}},
+				Patterns: []core.PatternSummary{
+					{Template: "timeout calling bank-gw", Count: 30, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 6.3, SampleLines: []string{"timeout calling bank-gw"}},
 				},
 			},
 			{
 				Service: "order-svc", Level: "ERROR", Count: 20, Window: time.Minute,
 				Timestamp: time.Date(2026, 4, 12, 14, 30, 0, 0, time.UTC),
-				Patterns: []notify.PatternSummary{
-					{Template: "upstream error from payment-svc", Count: 20, Level: "ERROR", Anomaly: notify.AnomalySpike, ZScore: 5.0, SampleLines: []string{"upstream error from payment-svc"}},
+				Patterns: []core.PatternSummary{
+					{Template: "upstream error from payment-svc", Count: 20, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 5.0, SampleLines: []string{"upstream error from payment-svc"}},
 				},
 			},
 		},
@@ -334,7 +334,7 @@ SUGGESTIONS:
 		Window:   2 * time.Minute,
 	}
 
-	in := make(chan notify.Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- inc
 	close(in)
 	out := d.Run(context.Background(), in)

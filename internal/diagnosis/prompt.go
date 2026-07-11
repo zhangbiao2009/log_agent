@@ -5,13 +5,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zhangbiao2009/log_agent/internal/notify"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 const maxPromptServices = 5
 
 // BuildPrompt assembles the LLM prompt from incident data.
-func BuildPrompt(inc notify.Incident) string {
+func BuildPrompt(inc core.Incident) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are an SRE assistant diagnosing a production incident.\n\n")
@@ -33,7 +33,7 @@ func BuildPrompt(inc notify.Incident) string {
 	if len(alerts) > maxPromptServices {
 		// Keep the top services by max ZScore.
 		type scored struct {
-			alert notify.Alert
+			alert core.Alert
 			z     float64
 		}
 		items := make([]scored, len(alerts))
@@ -44,7 +44,7 @@ func BuildPrompt(inc notify.Incident) string {
 			return items[i].z > items[j].z
 		})
 		omitted = len(items) - maxPromptServices
-		kept := make([]notify.Alert, maxPromptServices)
+		kept := make([]core.Alert, maxPromptServices)
 		for i := 0; i < maxPromptServices; i++ {
 			kept[i] = items[i].alert
 		}
@@ -80,7 +80,7 @@ SUGGESTIONS:
 	return sb.String()
 }
 
-func maxAlertZScore(a notify.Alert) float64 {
+func maxAlertZScore(a core.Alert) float64 {
 	var max float64
 	for _, p := range a.Patterns {
 		if p.ZScore > max {
@@ -90,13 +90,13 @@ func maxAlertZScore(a notify.Alert) float64 {
 	return max
 }
 
-func promptAnomalyTag(p notify.PatternSummary) string {
+func promptAnomalyTag(p core.PatternSummary) string {
 	switch p.Anomaly {
-	case notify.AnomalyNewPattern:
+	case core.AnomalyNewPattern:
 		return " [NEW]"
-	case notify.AnomalySpike:
+	case core.AnomalySpike:
 		return fmt.Sprintf(" [SPIKE z=%.1f]", p.ZScore)
-	case notify.AnomalyRateJump:
+	case core.AnomalyRateJump:
 		return fmt.Sprintf(" [RATE-JUMP z=%.1f]", p.ZScore)
 	default:
 		return ""
