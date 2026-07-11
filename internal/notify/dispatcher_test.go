@@ -3,17 +3,18 @@ package notify
 import (
 	"context"
 	"errors"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"sync"
 	"testing"
 )
 
 type mockNotifier struct {
-	sendFunc  func(ctx context.Context, inc Incident) error
-	incidents []Incident
+	sendFunc  func(ctx context.Context, inc core.Incident) error
+	incidents []core.Incident
 	mu        sync.Mutex
 }
 
-func (m *mockNotifier) Send(ctx context.Context, inc Incident) error {
+func (m *mockNotifier) Send(ctx context.Context, inc core.Incident) error {
 	m.mu.Lock()
 	m.incidents = append(m.incidents, inc)
 	m.mu.Unlock()
@@ -25,17 +26,17 @@ func (m *mockNotifier) Send(ctx context.Context, inc Incident) error {
 
 func (m *mockNotifier) Name() string { return "mock" }
 
-func (m *mockNotifier) getIncidents() []Incident {
+func (m *mockNotifier) getIncidents() []core.Incident {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := make([]Incident, len(m.incidents))
+	cp := make([]core.Incident, len(m.incidents))
 	copy(cp, m.incidents)
 	return cp
 }
 
-// wrapAlert creates a single-alert Incident for testing backward compat.
-func wrapAlert(a Alert) Incident {
-	return Incident{Alerts: []Alert{a}, Services: []string{a.Service}}
+// wrapAlert creates a single-alert core.Incident for testing backward compat.
+func wrapAlert(a core.Alert) core.Incident {
+	return core.Incident{Alerts: []core.Alert{a}, Services: []string{a.Service}}
 }
 
 func TestDispatcher_AllSuccess(t *testing.T) {
@@ -43,7 +44,7 @@ func TestDispatcher_AllSuccess(t *testing.T) {
 	m2 := &mockNotifier{}
 	d := NewDispatcher(m1, m2)
 
-	inc := wrapAlert(Alert{Service: "svc1", Level: "ERROR", Count: 5})
+	inc := wrapAlert(core.Alert{Service: "svc1", Level: "ERROR", Count: 5})
 	err := d.Dispatch(context.Background(), inc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,13 +61,13 @@ func TestDispatcher_AllSuccess(t *testing.T) {
 func TestDispatcher_PartialFailure(t *testing.T) {
 	m1 := &mockNotifier{}
 	m2 := &mockNotifier{
-		sendFunc: func(ctx context.Context, inc Incident) error {
+		sendFunc: func(ctx context.Context, inc core.Incident) error {
 			return errors.New("slack down")
 		},
 	}
 	d := NewDispatcher(m1, m2)
 
-	inc := wrapAlert(Alert{Service: "svc1", Level: "ERROR", Count: 5})
+	inc := wrapAlert(core.Alert{Service: "svc1", Level: "ERROR", Count: 5})
 	err := d.Dispatch(context.Background(), inc)
 	if err == nil {
 		t.Fatal("expected error from partial failure")
@@ -79,21 +80,21 @@ func TestDispatcher_PartialFailure(t *testing.T) {
 
 func TestDispatcher_NoNotifiers(t *testing.T) {
 	d := NewDispatcher()
-	err := d.Dispatch(context.Background(), Incident{})
+	err := d.Dispatch(context.Background(), core.Incident{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestDispatcher_AllFail(t *testing.T) {
-	fail := func(ctx context.Context, inc Incident) error {
+	fail := func(ctx context.Context, inc core.Incident) error {
 		return errors.New("fail")
 	}
 	m1 := &mockNotifier{sendFunc: fail}
 	m2 := &mockNotifier{sendFunc: fail}
 	d := NewDispatcher(m1, m2)
 
-	err := d.Dispatch(context.Background(), wrapAlert(Alert{Service: "svc1"}))
+	err := d.Dispatch(context.Background(), wrapAlert(core.Alert{Service: "svc1"}))
 	if err == nil {
 		t.Fatal("expected error when all notifiers fail")
 	}
@@ -107,7 +108,7 @@ func TestRoutedDispatcher_P1MatchesAll(t *testing.T) {
 		{Notifier: m, Severities: []string{"P1", "P2", "P3"}},
 	})
 
-	inc := Incident{Severity: "P1", Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
+	inc := core.Incident{Severity: "P1", Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
 	if err := d.Dispatch(context.Background(), inc); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestRoutedDispatcher_EmptySeverities_MatchesAll(t *testing.T) {
 	})
 
 	for _, sev := range []string{"P1", "P2", "P3", "", "UNKNOWN"} {
-		inc := Incident{Severity: sev, Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
+		inc := core.Incident{Severity: sev, Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
 		d.Dispatch(context.Background(), inc)
 	}
 	if got := len(m.getIncidents()); got != 5 {
@@ -137,7 +138,7 @@ func TestRoutedDispatcher_NoMatch_Skips(t *testing.T) {
 		{Notifier: m, Severities: []string{"P1"}},
 	})
 
-	inc := Incident{Severity: "P3", Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
+	inc := core.Incident{Severity: "P3", Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
 	if err := d.Dispatch(context.Background(), inc); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +155,8 @@ func TestRoutedDispatcher_MixedRoutes(t *testing.T) {
 		{Notifier: logCh}, // all severities
 	})
 
-	p1 := Incident{Severity: "P1", Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
-	p3 := Incident{Severity: "P3", Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
+	p1 := core.Incident{Severity: "P1", Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
+	p3 := core.Incident{Severity: "P3", Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
 
 	d.Dispatch(context.Background(), p1)
 	d.Dispatch(context.Background(), p3)
@@ -174,11 +175,11 @@ func TestRoutedDispatcher_EventTypePassedThrough(t *testing.T) {
 		{Notifier: m},
 	})
 
-	inc := Incident{
+	inc := core.Incident{
 		Severity:  "P1",
 		EventType: "resolved",
-		Status:    StatusResolved,
-		Alerts:    []Alert{{Service: "svc"}},
+		Status:    core.StatusResolved,
+		Alerts:    []core.Alert{{Service: "svc"}},
 		Services:  []string{"svc"},
 	}
 	d.Dispatch(context.Background(), inc)
@@ -190,7 +191,7 @@ func TestRoutedDispatcher_EventTypePassedThrough(t *testing.T) {
 	if got[0].EventType != "resolved" {
 		t.Errorf("EventType = %q, want resolved", got[0].EventType)
 	}
-	if got[0].Status != StatusResolved {
+	if got[0].Status != core.StatusResolved {
 		t.Errorf("Status = %q, want RESOLVED", got[0].Status)
 	}
 }
@@ -201,7 +202,7 @@ func TestRoutedDispatcher_NoSeverityOnIncident(t *testing.T) {
 		{Notifier: m, Severities: []string{"P1"}},
 	})
 
-	inc := Incident{Alerts: []Alert{{Service: "svc"}}, Services: []string{"svc"}}
+	inc := core.Incident{Alerts: []core.Alert{{Service: "svc"}}, Services: []string{"svc"}}
 	d.Dispatch(context.Background(), inc)
 
 	if len(m.getIncidents()) != 0 {

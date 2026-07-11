@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"log/slog"
 	"strings"
 )
@@ -20,7 +21,7 @@ func NewLogNotifier(logger *slog.Logger) *LogNotifier {
 
 func (l *LogNotifier) Name() string { return "log" }
 
-func (l *LogNotifier) Send(_ context.Context, incident Incident) error {
+func (l *LogNotifier) Send(_ context.Context, incident core.Incident) error {
 	if incident.IsSingleAlert() {
 		l.sendAlert(incident.Alerts[0])
 		if incident.Diagnosis != "" {
@@ -59,7 +60,7 @@ func (l *LogNotifier) Send(_ context.Context, incident Incident) error {
 	return nil
 }
 
-func (l *LogNotifier) sendDiagnosis(inc Incident) {
+func (l *LogNotifier) sendDiagnosis(inc core.Incident) {
 	l.Logger.Info("DIAGNOSIS",
 		"severity", inc.Severity,
 		"diagnosis", inc.Diagnosis,
@@ -73,7 +74,7 @@ func (l *LogNotifier) sendDiagnosis(inc Incident) {
 	}
 }
 
-func (l *LogNotifier) sendAlert(alert Alert) {
+func (l *LogNotifier) sendAlert(alert core.Alert) {
 	if len(alert.Patterns) > 0 {
 		var sb strings.Builder
 		for _, p := range alert.Patterns {
@@ -107,15 +108,15 @@ func (l *LogNotifier) sendAlert(alert Alert) {
 	)
 }
 
-// anomalyTag returns the annotation suffix for a PatternSummary, e.g. " SPIKE z=4.2".
-// Returns an empty string for AnomalyNone.
-func anomalyTag(p PatternSummary) string {
+// anomalyTag returns the annotation suffix for a core.PatternSummary, e.g. " SPIKE z=4.2".
+// Returns an empty string for core.AnomalyNone.
+func anomalyTag(p core.PatternSummary) string {
 	switch p.Anomaly {
-	case AnomalyNewPattern:
+	case core.AnomalyNewPattern:
 		return " NEW"
-	case AnomalySpike:
+	case core.AnomalySpike:
 		return fmt.Sprintf(" SPIKE z=%.1f", p.ZScore)
-	case AnomalyRateJump:
+	case core.AnomalyRateJump:
 		return fmt.Sprintf(" RATE-JUMP z=%.1f", p.ZScore)
 	default:
 		return ""

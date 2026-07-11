@@ -96,7 +96,7 @@ comes from two places:
    with its neighbors, bounded by channel buffer sizes — while the Aggregator
    summarizes window *N*, the Filter is already processing window *N+1*.
 
-**Fan-in.** `notify.MergeAlerts` merges the N per-service `Alert` channels into
+**Fan-in.** `alert.MergeAlerts` merges the N per-service `Alert` channels into
 one before the Correlator. This is the single synchronization point between the
 two zones. It merges low-volume `Alert`s (a few per window), not raw log lines,
 so the merge is cheap. Ordering across services is not guaranteed; the
@@ -629,12 +629,20 @@ log_agent/
 │   │   ├── prompt.go                  ← prompt assembly
 │   │   ├── parse.go                   ← LLM response parser
 │   │   └── *_test.go
-│   ├── notify/
-│   │   ├── notifier.go                ← Notifier interface, Dispatcher, severity routing
+│   ├── core/
+│   │   ├── alert.go                   ← Alert, PatternSummary, AnomalyKind (shared types)
 │   │   ├── incident.go                ← Incident struct, status types, ID generation
-│   │   ├── lifecycle.go               ← LifecycleManager (OPEN→ONGOING→RESOLVED, dedup)
+│   │   ├── clock.go                   ← Clock interface + RealClock() (time injection)
+│   │   └── *_test.go
+│   ├── alert/
 │   │   ├── aggregator.go              ← time-window alert aggregation
 │   │   ├── merge.go                   ← MergeAlerts fan-in of per-service pipelines
+│   │   └── *_test.go
+│   ├── incident/
+│   │   ├── lifecycle.go               ← LifecycleManager (OPEN→ONGOING→RESOLVED, dedup)
+│   │   └── *_test.go
+│   ├── notify/
+│   │   ├── notifier.go                ← Notifier interface, Dispatcher, severity routing
 │   │   ├── slack.go                   ← Slack Block Kit webhook
 │   │   ├── teams.go                   ← Microsoft Teams Adaptive Card webhook
 │   │   ├── email.go                   ← SMTP email (HTML template)
@@ -642,8 +650,7 @@ log_agent/
 │   │   └── *_test.go
 │   └── testutil/
 │       ├── fake_clock.go              ← deterministic time for tests
-│       ├── fake_loki.go               ← httptest-based fake Loki
-│       └── mock_notifier.go           ← mock notifier for pipeline tests
+│       └── fake_loki.go               ← httptest-based fake Loki
 ├── testdata/
 │   ├── sample_logs.ndjson             ← demo log data (single-service)
 │   ├── correlator_demo.ndjson         ← demo log data (multi-service cascade)
@@ -664,7 +671,7 @@ notifications to any configured channel.
 - `internal/notify/notifier.go` — `Notifier` interface + Dispatcher (concurrent fan-out)
 - `internal/notify/slack.go` — Slack Block Kit webhook
 - `internal/notify/log.go` — slog-based stdout notifier
-- `internal/notify/aggregator.go` — time-window alert aggregation
+- `internal/alert/aggregator.go` — time-window alert aggregation
 - `cmd/agent/main.go` — YAML config loading, pipeline wiring, graceful shutdown
 
 ### Phase 2: Pattern Grouping ✅
@@ -710,12 +717,12 @@ notifications to any configured channel.
 **Goal:** Deliver diagnosis to the right people with incident lifecycle (dedup, auto-resolve).
 
 **Built:**
-- `internal/notify/lifecycle.go` — LifecycleManager: OPEN→ONGOING→RESOLVED state machine,
+- `internal/incident/lifecycle.go` — LifecycleManager: OPEN→ONGOING→RESOLVED state machine,
   dedup window, auto-resolve timer
 - `internal/notify/email.go` — SMTP email notifier (HTML template, severity-colored headers)
 - `internal/notify/teams.go` — Microsoft Teams webhook (Adaptive Card format)
 - `internal/notify/notifier.go` — severity routing via `NotifierRoute` + `NewRoutedDispatcher`
-- `internal/notify/incident.go` — `IncidentStatus`, `EventType`, `Duration` fields
+- `internal/core/incident.go` — `IncidentStatus`, `EventType`, `Duration` fields
 - Updated Slack + Log notifiers with event-type-aware formatting
 
 ### Future: RAG Over Past Incidents

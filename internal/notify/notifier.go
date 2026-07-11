@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"log/slog"
 	"strings"
 	"sync"
@@ -11,7 +12,7 @@ import (
 
 // Notifier is the interface all notification channels implement.
 type Notifier interface {
-	Send(ctx context.Context, incident Incident) error
+	Send(ctx context.Context, incident core.Incident) error
 	Name() string
 }
 
@@ -71,7 +72,7 @@ func NewRoutedDispatcher(routes []NotifierRoute) *Dispatcher {
 // Dispatch sends the incident to all notifiers whose severity filter matches.
 // Logs errors from individual notifiers but does not fail the pipeline.
 // Returns an error if any notifier failed.
-func (d *Dispatcher) Dispatch(ctx context.Context, incident Incident) error {
+func (d *Dispatcher) Dispatch(ctx context.Context, incident core.Incident) error {
 	if len(d.notifiers) == 0 {
 		return nil
 	}

@@ -1,18 +1,21 @@
-package notify
+package incident
 
 import (
 	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zhangbiao2009/log_agent/internal/core"
+	"github.com/zhangbiao2009/log_agent/internal/notify"
 )
 
 // drainAsync starts reading from ch in a goroutine and returns
 // the collected results once the channel closes or idleTimeout elapses
 // with no new events.
-func drainAsync(ch <-chan Incident, idleTimeout time.Duration) func() []Incident {
+func drainAsync(ch <-chan core.Incident, idleTimeout time.Duration) func() []core.Incident {
 	var mu sync.Mutex
-	var results []Incident
+	var results []core.Incident
 	done := make(chan struct{})
 
 	go func() {
@@ -32,26 +35,26 @@ func drainAsync(ch <-chan Incident, idleTimeout time.Duration) func() []Incident
 		}
 	}()
 
-	return func() []Incident {
+	return func() []core.Incident {
 		<-done
 		mu.Lock()
 		defer mu.Unlock()
-		cp := make([]Incident, len(results))
+		cp := make([]core.Incident, len(results))
 		copy(cp, results)
 		return cp
 	}
 }
 
-func makeIncident(id string) Incident {
-	return Incident{
+func makeIncident(id string) core.Incident {
+	return core.Incident{
 		ID:       id,
 		Services: []string{"svc-a"},
-		Alerts:   []Alert{{Service: "svc-a", Level: "ERROR", Count: 5, Window: time.Minute}},
+		Alerts:   []core.Alert{{Service: "svc-a", Level: "ERROR", Count: 5, Window: time.Minute}},
 	}
 }
 
-func filterByEventType(incidents []Incident, eventType string) []Incident {
-	var result []Incident
+func filterByEventType(incidents []core.Incident, eventType string) []core.Incident {
+	var result []core.Incident
 	for _, inc := range incidents {
 		if inc.EventType == eventType {
 			result = append(result, inc)
@@ -60,7 +63,7 @@ func filterByEventType(incidents []Incident, eventType string) []Incident {
 	return result
 }
 
-func eventTypes(incidents []Incident) []string {
+func eventTypes(incidents []core.Incident) []string {
 	var types []string
 	for _, inc := range incidents {
 		types = append(types, inc.EventType+"("+inc.ID+")")
@@ -77,7 +80,7 @@ func TestLifecycle_NewIncident_EmitsOpened(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("inc-1")
 	close(in)
 
@@ -89,7 +92,7 @@ func TestLifecycle_NewIncident_EmitsOpened(t *testing.T) {
 	if len(opened) != 1 {
 		t.Fatalf("expected 1 opened, got %d: %v", len(opened), eventTypes(results))
 	}
-	if opened[0].Status != StatusOpen {
+	if opened[0].Status != core.StatusOpen {
 		t.Errorf("status = %s, want OPEN", opened[0].Status)
 	}
 	if opened[0].EventType != "opened" {
@@ -104,7 +107,7 @@ func TestLifecycle_DuplicateWithinWindow_Suppressed(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident, 2)
+	in := make(chan core.Incident, 2)
 	in <- makeIncident("inc-1")
 	in <- makeIncident("inc-1")
 	close(in)
@@ -137,7 +140,7 @@ func TestLifecycle_DuplicateAfterWindow_EmitsUpdated(t *testing.T) {
 		return fakeNow
 	}
 
-	in := make(chan Incident, 2)
+	in := make(chan core.Incident, 2)
 	out := lm.Run(context.Background(), in)
 	wait := drainAsync(out, 500*time.Millisecond)
 
@@ -160,7 +163,7 @@ func TestLifecycle_DuplicateAfterWindow_EmitsUpdated(t *testing.T) {
 	if len(updated) != 1 {
 		t.Errorf("expected 1 updated, got %d", len(updated))
 	}
-	if len(updated) > 0 && updated[0].Status != StatusOngoing {
+	if len(updated) > 0 && updated[0].Status != core.StatusOngoing {
 		t.Errorf("updated status = %s, want ONGOING", updated[0].Status)
 	}
 }
@@ -180,7 +183,7 @@ func TestLifecycle_MultipleUpdates_Throttled(t *testing.T) {
 		return fakeNow
 	}
 
-	in := make(chan Incident, 5)
+	in := make(chan core.Incident, 5)
 	out := lm.Run(context.Background(), in)
 	wait := drainAsync(out, 500*time.Millisecond)
 
@@ -232,7 +235,7 @@ func TestLifecycle_DifferentIDs_Independent(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident, 2)
+	in := make(chan core.Incident, 2)
 	in <- makeIncident("inc-1")
 	in <- makeIncident("inc-2")
 	close(in)
@@ -261,7 +264,7 @@ func TestLifecycle_UpdatedIncident_HasLatestData(t *testing.T) {
 		return fakeNow
 	}
 
-	in := make(chan Incident, 2)
+	in := make(chan core.Incident, 2)
 	out := lm.Run(context.Background(), in)
 	wait := drainAsync(out, 500*time.Millisecond)
 
@@ -298,7 +301,7 @@ func TestLifecycle_AutoResolve_AfterTimeout(t *testing.T) {
 		CheckInterval: 50 * time.Millisecond,
 	})
 
-	in := make(chan Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("inc-1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -324,7 +327,7 @@ func TestLifecycle_AutoResolve_ResetByNewEvent(t *testing.T) {
 		CheckInterval: 50 * time.Millisecond,
 	})
 
-	in := make(chan Incident)
+	in := make(chan core.Incident)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -351,7 +354,7 @@ func TestLifecycle_Resolved_IncidentHasDuration(t *testing.T) {
 		CheckInterval: 50 * time.Millisecond,
 	})
 
-	in := make(chan Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("inc-1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -376,7 +379,7 @@ func TestLifecycle_Resolved_RemovedFromTracking(t *testing.T) {
 		CheckInterval: 40 * time.Millisecond,
 	})
 
-	in := make(chan Incident)
+	in := make(chan core.Incident)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -408,7 +411,7 @@ func TestLifecycle_ContextCancel_ResolvesAll(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident, 3)
+	in := make(chan core.Incident, 3)
 	in <- makeIncident("inc-1")
 	in <- makeIncident("inc-2")
 	in <- makeIncident("inc-3")
@@ -438,7 +441,7 @@ func TestLifecycle_InputCloses_ResolvesAll(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident, 2)
+	in := make(chan core.Incident, 2)
 	in <- makeIncident("inc-1")
 	in <- makeIncident("inc-2")
 	close(in)
@@ -463,7 +466,7 @@ func TestLifecycle_EmptyInput_ClosesOutput(t *testing.T) {
 		CheckInterval: time.Hour,
 	})
 
-	in := make(chan Incident)
+	in := make(chan core.Incident)
 	close(in)
 	out := lm.Run(context.Background(), in)
 	results := drainAsync(out, 500*time.Millisecond)()
@@ -482,7 +485,7 @@ func TestLifecycle_ConcurrentResolveAndEvent(t *testing.T) {
 		CheckInterval: 20 * time.Millisecond,
 	})
 
-	in := make(chan Incident)
+	in := make(chan core.Incident)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -515,7 +518,7 @@ func TestLifecycle_RaceDetector(t *testing.T) {
 		CheckInterval: 10 * time.Millisecond,
 	})
 
-	in := make(chan Incident)
+	in := make(chan core.Incident)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -560,7 +563,7 @@ func TestLifecycle_ZeroDedupWindow(t *testing.T) {
 		mu.Unlock()
 	}
 
-	in := make(chan Incident, 3)
+	in := make(chan core.Incident, 3)
 	out := lm.Run(context.Background(), in)
 	wait := drainAsync(out, 500*time.Millisecond)
 
@@ -589,7 +592,7 @@ func TestLifecycle_VeryShortResolve(t *testing.T) {
 		CheckInterval: time.Millisecond,
 	})
 
-	in := make(chan Incident, 1)
+	in := make(chan core.Incident, 1)
 	in <- makeIncident("inc-1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -626,9 +629,9 @@ func TestPipeline_LifecycleToDispatcher(t *testing.T) {
 	}
 
 	mock := &mockNotifier{}
-	dispatcher := NewDispatcher(mock)
+	dispatcher := notify.NewDispatcher(mock)
 
-	in := make(chan Incident, 3)
+	in := make(chan core.Incident, 3)
 	out := lm.Run(context.Background(), in)
 
 	in <- makeIncident("inc-1")

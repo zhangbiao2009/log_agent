@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"io"
 	"net/http"
 	"strings"
@@ -32,7 +33,7 @@ func NewTeamsNotifier(cfg TeamsConfig) *TeamsNotifier {
 
 func (t *TeamsNotifier) Name() string { return "teams" }
 
-func (t *TeamsNotifier) Send(ctx context.Context, incident Incident) error {
+func (t *TeamsNotifier) Send(ctx context.Context, incident core.Incident) error {
 	if t.cfg.WebhookURL == "" {
 		return fmt.Errorf("teams: empty webhook URL")
 	}
@@ -106,7 +107,7 @@ type acFact struct {
 
 func boolPtr(v bool) *bool { return &v }
 
-func (t *TeamsNotifier) buildCard(inc Incident) adaptiveCardEnvelope {
+func (t *TeamsNotifier) buildCard(inc core.Incident) adaptiveCardEnvelope {
 	color := teamsSeverityColor(inc.Severity)
 	title := t.buildTitle(inc)
 
@@ -199,7 +200,7 @@ func (t *TeamsNotifier) buildCard(inc Incident) adaptiveCardEnvelope {
 	}
 }
 
-func (t *TeamsNotifier) buildTitle(inc Incident) string {
+func (t *TeamsNotifier) buildTitle(inc core.Incident) string {
 	service := inc.RootService
 	if service == "" && len(inc.Services) > 0 {
 		service = inc.Services[0]

@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,13 +12,13 @@ import (
 	"time"
 )
 
-func teamsTestIncident(eventType string) Incident {
-	inc := Incident{
+func teamsTestIncident(eventType string) core.Incident {
+	inc := core.Incident{
 		ID:          "teams-123",
 		Services:    []string{"order-service", "payment-service", "bank-gateway"},
 		RootService: "bank-gateway",
 		DepChain:    []string{"bank-gateway", "payment-service", "order-service"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "bank-gateway", Level: "ERROR", Count: 200, Window: time.Minute},
 		},
 		OpenedAt:    time.Now(),
@@ -25,15 +26,15 @@ func teamsTestIncident(eventType string) Incident {
 		Diagnosis:   "bank-gateway stopped responding",
 		Severity:    "P1",
 		Suggestions: []string{"Rollback bank-gateway", "Check DB connections"},
-		Status:      StatusOpen,
+		Status:      core.StatusOpen,
 		EventType:   eventType,
 	}
 	if eventType == "resolved" {
-		inc.Status = StatusResolved
+		inc.Status = core.StatusResolved
 		inc.Duration = 5 * time.Minute
 	}
 	if eventType == "updated" {
-		inc.Status = StatusOngoing
+		inc.Status = core.StatusOngoing
 	}
 	return inc
 }

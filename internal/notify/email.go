@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"html/template"
 	"net/smtp"
 	"strings"
@@ -42,7 +43,7 @@ func NewEmailNotifier(cfg EmailConfig) *EmailNotifier {
 
 func (e *EmailNotifier) Name() string { return "email" }
 
-func (e *EmailNotifier) Send(_ context.Context, incident Incident) error {
+func (e *EmailNotifier) Send(_ context.Context, incident core.Incident) error {
 	if len(e.cfg.Recipients) == 0 {
 		return fmt.Errorf("email: no recipients configured")
 	}
@@ -67,7 +68,7 @@ func (e *EmailNotifier) Send(_ context.Context, incident Incident) error {
 	return nil
 }
 
-func (e *EmailNotifier) buildSubject(inc Incident) string {
+func (e *EmailNotifier) buildSubject(inc core.Incident) string {
 	sev := inc.Severity
 	if sev == "" {
 		sev = "INFO"
@@ -123,10 +124,10 @@ type emailData struct {
 	Duration    string
 	Diagnosis   string
 	Suggestions []string
-	Alerts      []Alert
+	Alerts      []core.Alert
 }
 
-func (e *EmailNotifier) buildBody(inc Incident) (string, error) {
+func (e *EmailNotifier) buildBody(inc core.Incident) (string, error) {
 	data := emailData{
 		Color:       severityColor(inc.Severity),
 		Title:       e.buildSubject(inc),

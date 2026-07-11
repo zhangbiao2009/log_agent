@@ -1,10 +1,11 @@
-package notify
+package alert
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"github.com/zhangbiao2009/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/log_agent/internal/testutil"
 )
@@ -40,7 +41,7 @@ func TestAggregator_BasicWindow(t *testing.T) {
 
 	clock.Advance(1*time.Minute + time.Millisecond)
 
-	var alerts []Alert
+	var alerts []core.Alert
 	timeout := time.After(2 * time.Second)
 	for len(alerts) < 2 {
 		select {
@@ -51,7 +52,7 @@ func TestAggregator_BasicWindow(t *testing.T) {
 		}
 	}
 
-	var svc1, svc2 *Alert
+	var svc1, svc2 *core.Alert
 	for i := range alerts {
 		switch alerts[i].Service {
 		case "svc1":

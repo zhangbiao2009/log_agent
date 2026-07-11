@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"log/slog"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ func TestLogNotifier_Send(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{
+	alert := core.Alert{
 		Service:     "myapp",
 		Level:       "ERROR",
 		Count:       3,
@@ -21,7 +22,7 @@ func TestLogNotifier_Send(t *testing.T) {
 		SampleLines: []string{"line1", "line2"},
 		Timestamp:   time.Now(),
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 
 	err := ln.Send(context.Background(), inc)
 	if err != nil {
@@ -53,8 +54,8 @@ func TestLogNotifier_NilLogger(t *testing.T) {
 		t.Fatal("expected non-nil default logger")
 	}
 	// Should not panic
-	alert := Alert{Service: "svc", Level: "WARN", Count: 1, Window: time.Minute}
-	err := ln.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}})
+	alert := core.Alert{Service: "svc", Level: "WARN", Count: 1, Window: time.Minute}
+	err := ln.Send(context.Background(), core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,18 +66,18 @@ func TestLogNotifier_PatternRendering(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{
+	alert := core.Alert{
 		Service: "myapp",
 		Level:   "ERROR",
 		Count:   5,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
+		Patterns: []core.PatternSummary{
 			{Template: "connection timeout to <*>", Count: 3, Level: "ERROR"},
 			{Template: "disk write error", Count: 2, Level: "WARN"},
 		},
 		Timestamp: time.Now(),
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 
 	err := ln.Send(context.Background(), inc)
 	if err != nil {
@@ -108,16 +109,16 @@ func TestLogNotifier_PatternWithSpikeAnomaly(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   200,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
+		Patterns: []core.PatternSummary{
+			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 4.2},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,16 +136,16 @@ func TestLogNotifier_PatternWithNewPattern(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   1,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "new error <*>", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
+		Patterns: []core.PatternSummary{
+			{Template: "new error <*>", Count: 1, Level: "ERROR", Anomaly: core.AnomalyNewPattern},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,16 +160,16 @@ func TestLogNotifier_PatternWithNoAnomaly(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   5,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
+		Patterns: []core.PatternSummary{
+			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: core.AnomalyNone},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,21 +179,21 @@ func TestLogNotifier_PatternWithNoAnomaly(t *testing.T) {
 	}
 }
 
-// --- Incident rendering tests ---
+// --- core.Incident rendering tests ---
 
 func TestLogNotifier_MultiServiceIncident(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "abc123",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
-			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
-			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		Alerts: []core.Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
 		},
 	}
 	if err := ln.Send(context.Background(), inc); err != nil {
@@ -215,8 +216,8 @@ func TestLogNotifier_SingleAlertIncidentRendersAsAlert(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{"svc-A"}}
+	alert := core.Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{"svc-A"}}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,12 +235,12 @@ func TestLogNotifier_IncidentWithDepChain(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "xyz789",
 		Services:    []string{"A", "B", "C"},
 		RootService: "C",
 		DepChain:    []string{"C", "B", "A"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "C", Level: "ERROR", Count: 1, Window: time.Minute},
 			{Service: "B", Level: "ERROR", Count: 1, Window: time.Minute},
 			{Service: "A", Level: "ERROR", Count: 1, Window: time.Minute},
@@ -262,14 +263,14 @@ func TestLogNotifier_IncidentWithDiagnosis(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "diag-test",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
-			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
-			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		Alerts: []core.Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
 		},
 		Severity:    "P1",
 		Diagnosis:   "root cause text",
@@ -295,12 +296,12 @@ func TestLogNotifier_IncidentDiagnosisEmpty(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "no-diag",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
 			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute},
 		},
@@ -322,12 +323,12 @@ func TestLogNotifier_IncidentSeverityOnly(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "sev-only",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
 			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute},
 		},
@@ -351,9 +352,9 @@ func TestLogNotifier_SingleAlertWithDiagnosis(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	alert := Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
-	inc := Incident{
-		Alerts:      []Alert{alert},
+	alert := core.Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := core.Incident{
+		Alerts:      []core.Alert{alert},
 		Services:    []string{"svc-X"},
 		Diagnosis:   "service X is down",
 		Severity:    "P3",
@@ -387,15 +388,15 @@ func TestLogNotifier_EventType_Opened(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "log-ev-1",
 		Services:    []string{"svc-a", "svc-b"},
 		RootService: "svc-b",
 		DepChain:    []string{"svc-b", "svc-a"},
-		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
 		Severity:    "P1",
 		EventType:   "opened",
-		Status:      StatusOpen,
+		Status:      core.StatusOpen,
 	}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -415,15 +416,15 @@ func TestLogNotifier_EventType_Resolved(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "log-ev-2",
 		Services:    []string{"svc-a"},
 		RootService: "svc-a",
 		DepChain:    []string{"svc-a"},
-		Alerts:      []Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
 		Severity:    "P2",
 		EventType:   "resolved",
-		Status:      StatusResolved,
+		Status:      core.StatusResolved,
 		Duration:    3 * time.Minute,
 	}
 	if err := ln.Send(context.Background(), inc); err != nil {
@@ -444,15 +445,15 @@ func TestLogNotifier_EventType_Updated(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ln := NewLogNotifier(logger)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "log-ev-3",
 		Services:    []string{"svc-a", "svc-b"},
 		RootService: "svc-b",
 		DepChain:    []string{"svc-b", "svc-a"},
-		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
 		Severity:    "P1",
 		EventType:   "updated",
-		Status:      StatusOngoing,
+		Status:      core.StatusOngoing,
 	}
 	if err := ln.Send(context.Background(), inc); err != nil {
 		t.Fatalf("Send failed: %v", err)

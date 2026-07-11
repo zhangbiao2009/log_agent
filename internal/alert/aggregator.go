@@ -1,4 +1,4 @@
-package notify
+package alert
 
 import (
 	"context"
@@ -54,7 +54,7 @@ func (b *bucket) add(line ingest.LogLine) {
 type Aggregator struct {
 	Window   time.Duration
 	MinCount int
-	Clock    Clock
+	Clock    core.Clock
 }
 
 func NewAggregator(window time.Duration, minCount int) *Aggregator {
@@ -71,8 +71,8 @@ func NewAggregator(window time.Duration, minCount int) *Aggregator {
 	}
 }
 
-func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan Alert {
-	out := make(chan Alert, 100)
+func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan core.Alert {
+	out := make(chan core.Alert, 100)
 	go func() {
 		defer close(out)
 		buckets := make(map[bucketKey]*bucket)
@@ -104,7 +104,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan ingest.LogLine) <-chan A
 	return out
 }
 
-func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- Alert) {
+func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- core.Alert) {
 	now := a.Clock.Now()
 
 	type serviceInfo struct {
@@ -112,7 +112,7 @@ func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- Alert) {
 		highestRank int
 		level       string
 		samples     []string
-		patterns    []PatternSummary
+		patterns    []core.PatternSummary
 	}
 	serviceMap := make(map[string]*serviceInfo)
 
@@ -138,7 +138,7 @@ func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- Alert) {
 			if len(psamples) > 3 {
 				psamples = psamples[:3]
 			}
-			si.patterns = append(si.patterns, PatternSummary{
+			si.patterns = append(si.patterns, core.PatternSummary{
 				Template:    b.template,
 				Count:       b.count,
 				Level:       b.level,
@@ -155,7 +155,7 @@ func (a *Aggregator) flush(buckets map[bucketKey]*bucket, out chan<- Alert) {
 		sort.Slice(si.patterns, func(i, j int) bool {
 			return si.patterns[i].Count > si.patterns[j].Count
 		})
-		out <- Alert{
+		out <- core.Alert{
 			Service:     service,
 			Level:       si.level,
 			Count:       si.totalCount,

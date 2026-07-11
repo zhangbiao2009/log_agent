@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"io"
 	"net/http"
 	"strings"
@@ -24,7 +25,7 @@ func NewSlackNotifier(webhookURL string) *SlackNotifier {
 
 func (s *SlackNotifier) Name() string { return "slack" }
 
-func (s *SlackNotifier) Send(ctx context.Context, incident Incident) error {
+func (s *SlackNotifier) Send(ctx context.Context, incident core.Incident) error {
 	var msg slackMessage
 	if incident.IsSingleAlert() {
 		msg = s.formatAlertMessage(incident.Alerts[0])
@@ -67,7 +68,7 @@ type slackText struct {
 	Text string `json:"text"`
 }
 
-func (s *SlackNotifier) formatAlertMessage(alert Alert) slackMessage {
+func (s *SlackNotifier) formatAlertMessage(alert core.Alert) slackMessage {
 	emoji := levelEmoji(alert.Level)
 	header := fmt.Sprintf("%s *%s* — %s (%d errors in last %s)",
 		emoji, alert.Level, alert.Service, alert.Count, alert.Window)
@@ -125,7 +126,7 @@ func levelEmoji(level string) string {
 	}
 }
 
-func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
+func (s *SlackNotifier) formatIncidentMessage(incident core.Incident) slackMessage {
 	headerText := s.incidentHeader(incident)
 	headerText += fmt.Sprintf(" — %d services affected\nRoot cause: %s (deepest in chain)\nChain: %s",
 		len(incident.Services), incident.RootService,
@@ -165,7 +166,7 @@ func (s *SlackNotifier) formatIncidentMessage(incident Incident) slackMessage {
 	return slackMessage{Blocks: blocks}
 }
 
-func (s *SlackNotifier) diagnosisBlocks(incident Incident) []slackBlock {
+func (s *SlackNotifier) diagnosisBlocks(incident core.Incident) []slackBlock {
 	var blocks []slackBlock
 	diagText := fmt.Sprintf("\U0001F4CB *Diagnosis:*\n%s", slackEscape(incident.Diagnosis))
 	blocks = append(blocks, slackBlock{
@@ -186,7 +187,7 @@ func (s *SlackNotifier) diagnosisBlocks(incident Incident) []slackBlock {
 	return blocks
 }
 
-func (s *SlackNotifier) incidentHeader(inc Incident) string {
+func (s *SlackNotifier) incidentHeader(inc core.Incident) string {
 	sev := inc.Severity
 	if sev == "" {
 		sev = "INCIDENT"
@@ -202,14 +203,14 @@ func (s *SlackNotifier) incidentHeader(inc Incident) string {
 }
 
 // anomalyBadge returns a Slack emoji prefix for anomalous patterns.
-// Returns an empty string for AnomalyNone (steady-state patterns).
-func anomalyBadge(p PatternSummary) string {
+// Returns an empty string for core.AnomalyNone (steady-state patterns).
+func anomalyBadge(p core.PatternSummary) string {
 	switch p.Anomaly {
-	case AnomalyNewPattern:
+	case core.AnomalyNewPattern:
 		return ":new: "
-	case AnomalySpike:
+	case core.AnomalySpike:
 		return fmt.Sprintf(":chart_with_upward_trend: *+%.1f\u03c3* ", p.ZScore)
-	case AnomalyRateJump:
+	case core.AnomalyRateJump:
 		return fmt.Sprintf(":zap: *+%.1f\u03c3* ", p.ZScore)
 	default:
 		return ""

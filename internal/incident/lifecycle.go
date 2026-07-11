@@ -1,10 +1,12 @@
-package notify
+package incident
 
 import (
 	"context"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // LifecycleConfig controls dedup and auto-resolve behavior.
@@ -16,8 +18,8 @@ type LifecycleConfig struct {
 
 // trackedIncident is internal bookkeeping for an active incident.
 type trackedIncident struct {
-	incident     Incident
-	status       IncidentStatus
+	incident     core.Incident
+	status       core.IncidentStatus
 	firstSeen    time.Time
 	lastSeen     time.Time
 	lastNotified time.Time
@@ -46,8 +48,8 @@ func NewLifecycleManager(cfg LifecycleConfig) *LifecycleManager {
 // Status/EventType/Duration set. It runs a background goroutine for
 // auto-resolve checks. The output channel is closed after all tracked
 // incidents are resolved on shutdown.
-func (lm *LifecycleManager) Run(ctx context.Context, in <-chan Incident) <-chan Incident {
-	out := make(chan Incident)
+func (lm *LifecycleManager) Run(ctx context.Context, in <-chan core.Incident) <-chan core.Incident {
+	out := make(chan core.Incident)
 
 	go func() {
 		defer close(out)
@@ -87,7 +89,7 @@ func (lm *LifecycleManager) Run(ctx context.Context, in <-chan Incident) <-chan 
 
 // processIncident handles state transitions for an incoming incident.
 // Returns the notification to emit and whether to emit it.
-func (lm *LifecycleManager) processIncident(inc Incident) (Incident, bool) {
+func (lm *LifecycleManager) processIncident(inc core.Incident) (core.Incident, bool) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -98,15 +100,15 @@ func (lm *LifecycleManager) processIncident(inc Incident) (Incident, bool) {
 		// New incident → OPEN
 		lm.tracked[inc.ID] = &trackedIncident{
 			incident:     inc,
-			status:       StatusOpen,
+			status:       core.StatusOpen,
 			firstSeen:    now,
 			lastSeen:     now,
 			lastNotified: now,
 			updateCount:  0,
 		}
-		slog.Info("incident state change", "id", inc.ID, "from", "none", "to", StatusOpen, "event", "opened")
+		slog.Info("incident state change", "id", inc.ID, "from", "none", "to", core.StatusOpen, "event", "opened")
 
-		inc.Status = StatusOpen
+		inc.Status = core.StatusOpen
 		inc.EventType = "opened"
 		inc.OpenedAt = now
 		return inc, true
@@ -120,18 +122,18 @@ func (lm *LifecycleManager) processIncident(inc Incident) (Incident, bool) {
 	// Check dedup window.
 	if now.Sub(tracked.lastNotified) < lm.cfg.DedupWindow {
 		slog.Debug("notification suppressed (dedup)", "id", inc.ID, "within", lm.cfg.DedupWindow)
-		return Incident{}, false
+		return core.Incident{}, false
 	}
 
 	// Past dedup window → transition to ONGOING and emit "updated".
 	oldStatus := tracked.status
-	tracked.status = StatusOngoing
+	tracked.status = core.StatusOngoing
 	tracked.lastNotified = now
-	if oldStatus != StatusOngoing {
-		slog.Info("incident state change", "id", inc.ID, "from", oldStatus, "to", StatusOngoing, "event", "updated")
+	if oldStatus != core.StatusOngoing {
+		slog.Info("incident state change", "id", inc.ID, "from", oldStatus, "to", core.StatusOngoing, "event", "updated")
 	}
 
-	inc.Status = StatusOngoing
+	inc.Status = core.StatusOngoing
 	inc.EventType = "updated"
 	inc.OpenedAt = tracked.firstSeen
 	return inc, true
@@ -139,7 +141,7 @@ func (lm *LifecycleManager) processIncident(inc Incident) (Incident, bool) {
 
 // checkAutoResolve scans tracked incidents and resolves any whose lastSeen
 // is older than ResolveAfter.
-func (lm *LifecycleManager) checkAutoResolve(ctx context.Context, out chan<- Incident) {
+func (lm *LifecycleManager) checkAutoResolve(ctx context.Context, out chan<- core.Incident) {
 	lm.mu.Lock()
 
 	now := lm.now()
@@ -150,11 +152,11 @@ func (lm *LifecycleManager) checkAutoResolve(ctx context.Context, out chan<- Inc
 		}
 	}
 
-	var resolved []Incident
+	var resolved []core.Incident
 	for _, id := range toResolve {
 		t := lm.tracked[id]
 		inc := t.incident
-		inc.Status = StatusResolved
+		inc.Status = core.StatusResolved
 		inc.EventType = "resolved"
 		inc.OpenedAt = t.firstSeen
 		inc.Duration = now.Sub(t.firstSeen)
@@ -176,14 +178,14 @@ func (lm *LifecycleManager) checkAutoResolve(ctx context.Context, out chan<- Inc
 
 // resolveAll resolves all tracked incidents (used during shutdown).
 // Does not check ctx — shutdown must complete.
-func (lm *LifecycleManager) resolveAll(_ context.Context, out chan<- Incident) {
+func (lm *LifecycleManager) resolveAll(_ context.Context, out chan<- core.Incident) {
 	lm.mu.Lock()
 
 	now := lm.now()
-	var resolved []Incident
+	var resolved []core.Incident
 	for id, t := range lm.tracked {
 		inc := t.incident
-		inc.Status = StatusResolved
+		inc.Status = core.StatusResolved
 		inc.EventType = "resolved"
 		inc.OpenedAt = t.firstSeen
 		inc.Duration = now.Sub(t.firstSeen)

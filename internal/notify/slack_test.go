@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,7 @@ func TestSlackNotifier_Send(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{
+	alert := core.Alert{
 		Service: "myapp",
 		Level:   "ERROR",
 		Count:   42,
@@ -37,7 +38,7 @@ func TestSlackNotifier_Send(t *testing.T) {
 		},
 		Timestamp: time.Now(),
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 
 	err := sn.Send(context.Background(), inc)
 	if err != nil {
@@ -76,8 +77,8 @@ func TestSlackNotifier_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute}
-	err := sn.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}})
+	alert := core.Alert{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute}
+	err := sn.Send(context.Background(), core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -130,12 +131,12 @@ func TestSlackNotifier_PatternBlocks(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{
+	alert := core.Alert{
 		Service: "myapp",
 		Level:   "ERROR",
 		Count:   5,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
+		Patterns: []core.PatternSummary{
 			{
 				Template:    "connection timeout to <*>",
 				Count:       3,
@@ -152,7 +153,7 @@ func TestSlackNotifier_PatternBlocks(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,8 +194,8 @@ func TestSlackNotifier_FallsBackToSamples(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	// Alert with no Patterns → should fall back to SampleLines.
-	alert := Alert{
+	// core.Alert with no Patterns → should fall back to SampleLines.
+	alert := core.Alert{
 		Service:     "myapp",
 		Level:       "ERROR",
 		Count:       2,
@@ -203,7 +204,7 @@ func TestSlackNotifier_FallsBackToSamples(t *testing.T) {
 		Timestamp:   time.Now(),
 	}
 
-	if err := sn.Send(context.Background(), Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}); err != nil {
+	if err := sn.Send(context.Background(), core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -232,16 +233,16 @@ func TestSlackNotifier_SpikePatternHasEmoji(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   200,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: AnomalySpike, ZScore: 4.2},
+		Patterns: []core.PatternSummary{
+			{Template: "timeout <*>", Count: 200, Level: "ERROR", Anomaly: core.AnomalySpike, ZScore: 4.2},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,16 +274,16 @@ func TestSlackNotifier_NewPatternHasEmoji(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   1,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "new error", Count: 1, Level: "ERROR", Anomaly: AnomalyNewPattern},
+		Patterns: []core.PatternSummary{
+			{Template: "new error", Count: 1, Level: "ERROR", Anomaly: core.AnomalyNewPattern},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,16 +315,16 @@ func TestSlackNotifier_NoAnomalyPatternHasNoEmoji(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{
+	alert := core.Alert{
 		Service: "svc",
 		Level:   "ERROR",
 		Count:   5,
 		Window:  1 * time.Minute,
-		Patterns: []PatternSummary{
-			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: AnomalyNone},
+		Patterns: []core.PatternSummary{
+			{Template: "steady error", Count: 5, Level: "ERROR", Anomaly: core.AnomalyNone},
 		},
 	}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{alert.Service}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{alert.Service}}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestSlackNotifier_NoAnomalyPatternHasNoEmoji(t *testing.T) {
 	}
 }
 
-// --- Incident rendering tests ---
+// --- core.Incident rendering tests ---
 
 func TestSlackNotifier_MultiServiceIncidentBlocks(t *testing.T) {
 	var receivedBody []byte
@@ -353,14 +354,14 @@ func TestSlackNotifier_MultiServiceIncidentBlocks(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "abc123",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
-			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
-			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
+		Alerts: []core.Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+			{Service: "svc-B", Level: "ERROR", Count: 20, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "conn refused", Count: 20, Level: "ERROR"}}},
 		},
 	}
 	if err := sn.Send(context.Background(), inc); err != nil {
@@ -393,8 +394,8 @@ func TestSlackNotifier_SingleAlertIncidentBackwardCompat(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
-	inc := Incident{Alerts: []Alert{alert}, Services: []string{"svc-A"}}
+	alert := core.Alert{Service: "svc-A", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := core.Incident{Alerts: []core.Alert{alert}, Services: []string{"svc-A"}}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -419,12 +420,12 @@ func TestSlackNotifier_IncidentDepChainInHeader(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "xyz789",
 		Services:    []string{"A", "B", "C"},
 		RootService: "C",
 		DepChain:    []string{"C", "B", "A"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "C", Level: "ERROR", Count: 1, Window: time.Minute},
 			{Service: "B", Level: "ERROR", Count: 1, Window: time.Minute},
 			{Service: "A", Level: "ERROR", Count: 1, Window: time.Minute},
@@ -455,13 +456,13 @@ func TestSlackNotifier_IncidentWithDiagnosisBlocks(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "diag-slack",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
-			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+		Alerts: []core.Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
 		},
 		Severity:    "P1",
 		Diagnosis:   "root cause explanation",
@@ -514,13 +515,13 @@ func TestSlackNotifier_IncidentDiagnosisEmptyBackwardCompat(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "no-diag",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
-			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
+		Alerts: []core.Alert{
+			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute, Patterns: []core.PatternSummary{{Template: "timeout", Count: 10, Level: "ERROR"}}},
 		},
 	}
 	if err := sn.Send(context.Background(), inc); err != nil {
@@ -549,12 +550,12 @@ func TestSlackNotifier_IncidentSuggestionsAsNumberedList(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "sug-test",
 		Services:    []string{"svc-A", "svc-B"},
 		RootService: "svc-B",
 		DepChain:    []string{"svc-B", "svc-A"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "svc-A", Level: "ERROR", Count: 10, Window: time.Minute},
 		},
 		Severity:    "P2",
@@ -591,9 +592,9 @@ func TestSlackNotifier_SingleAlertWithDiagnosis(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	alert := Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
-	inc := Incident{
-		Alerts:      []Alert{alert},
+	alert := core.Alert{Service: "svc-X", Level: "ERROR", Count: 5, Window: time.Minute, SampleLines: []string{"error line"}}
+	inc := core.Incident{
+		Alerts:      []core.Alert{alert},
 		Services:    []string{"svc-X"},
 		Diagnosis:   "service X is down",
 		Severity:    "P3",
@@ -637,15 +638,15 @@ func TestSlackNotifier_IncidentHeader_Opened(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "hdr-1",
 		Services:    []string{"svc-a", "svc-b"},
 		RootService: "svc-b",
 		DepChain:    []string{"svc-b", "svc-a"},
-		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-b", Level: "ERROR", Count: 5, Window: time.Minute}},
 		Severity:    "P2",
 		EventType:   "opened",
-		Status:      StatusOpen,
+		Status:      core.StatusOpen,
 	}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -668,15 +669,15 @@ func TestSlackNotifier_IncidentHeader_Resolved(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "hdr-2",
 		Services:    []string{"svc-a"},
 		RootService: "svc-a",
 		DepChain:    []string{"svc-a"},
-		Alerts:      []Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-a", Level: "ERROR", Count: 1, Window: time.Minute}},
 		Severity:    "P1",
 		EventType:   "resolved",
-		Status:      StatusResolved,
+		Status:      core.StatusResolved,
 		Duration:    3 * time.Minute,
 	}
 	if err := sn.Send(context.Background(), inc); err != nil {
@@ -700,15 +701,15 @@ func TestSlackNotifier_IncidentHeader_Updated(t *testing.T) {
 	defer srv.Close()
 
 	sn := NewSlackNotifier(srv.URL)
-	inc := Incident{
+	inc := core.Incident{
 		ID:          "hdr-3",
 		Services:    []string{"svc-a", "svc-b"},
 		RootService: "svc-b",
 		DepChain:    []string{"svc-b", "svc-a"},
-		Alerts:      []Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
+		Alerts:      []core.Alert{{Service: "svc-b", Level: "ERROR", Count: 10, Window: time.Minute}},
 		Severity:    "P1",
 		EventType:   "updated",
-		Status:      StatusOngoing,
+		Status:      core.StatusOngoing,
 	}
 	if err := sn.Send(context.Background(), inc); err != nil {
 		t.Fatalf("Send failed: %v", err)

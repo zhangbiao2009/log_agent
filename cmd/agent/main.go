@@ -9,9 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zhangbiao2009/log_agent/internal/alert"
 	"github.com/zhangbiao2009/log_agent/internal/anomaly"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"github.com/zhangbiao2009/log_agent/internal/correlator"
 	"github.com/zhangbiao2009/log_agent/internal/diagnosis"
+	"github.com/zhangbiao2009/log_agent/internal/incident"
 	"github.com/zhangbiao2009/log_agent/internal/ingest"
 	"github.com/zhangbiao2009/log_agent/internal/notify"
 	"github.com/zhangbiao2009/log_agent/internal/pattern"
@@ -229,7 +232,7 @@ func buildSource(cfg *Config, svc ServiceConfig) (ingest.LogSource, error) {
 // source → filter → pattern → aggregate → anomaly, returning the service's
 // Alert channel. All stages run in their own goroutines with state isolated
 // to this service (own Drain tree, own aggregation window, own baselines).
-func buildServicePipeline(ctx context.Context, cfg *Config, svc ServiceConfig, window time.Duration, minCount int) (<-chan notify.Alert, error) {
+func buildServicePipeline(ctx context.Context, cfg *Config, svc ServiceConfig, window time.Duration, minCount int) (<-chan core.Alert, error) {
 	source, err := buildSource(cfg, svc)
 	if err != nil {
 		return nil, err
@@ -256,7 +259,7 @@ func buildServicePipeline(ctx context.Context, cfg *Config, svc ServiceConfig, w
 		enriched = pe.Run(ctx, filtered)
 	}
 
-	alerts := notify.NewAggregator(window, minCount).Run(ctx, enriched)
+	alerts := alert.NewAggregator(window, minCount).Run(ctx, enriched)
 
 	anomalous := alerts
 	if cfg.Anomaly.Enabled {
@@ -318,7 +321,7 @@ func run() error {
 
 	// Fan-out: one independent pipeline per service (source → filter →
 	// pattern → aggregate → anomaly), each producing an Alert channel.
-	alertChans := make([]<-chan notify.Alert, 0, len(cfg.Services))
+	alertChans := make([]<-chan core.Alert, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
 		if svc.Name == "" {
 			return fmt.Errorf("every service entry must have a name")
@@ -344,10 +347,10 @@ func run() error {
 
 	// Fan-in: merge all per-service Alert channels into one before the
 	// shared cross-service stages.
-	anomalous := notify.MergeAlerts(ctx, alertChans...)
+	anomalous := alert.MergeAlerts(ctx, alertChans...)
 
 	// Stage 5: Correlator (or bypass).
-	var incidents <-chan notify.Incident
+	var incidents <-chan core.Incident
 	if cfg.Correlator.Enabled {
 		graph, err := correlator.LoadFromYAML(cfg.Correlator.DependenciesFile)
 		if err != nil {
@@ -367,7 +370,7 @@ func run() error {
 	}
 
 	// Stage 6: Diagnoser (or pass-through).
-	var diagnosed <-chan notify.Incident
+	var diagnosed <-chan core.Incident
 	if cfg.Diagnosis.Enabled {
 		apiKey := os.Getenv("LLM_API_KEY")
 		if apiKey == "" {
@@ -392,12 +395,12 @@ func run() error {
 	}
 
 	// Stage 7: Lifecycle Manager (dedup + auto-resolve).
-	lifecycleCfg := notify.LifecycleConfig{
+	lifecycleCfg := incident.LifecycleConfig{
 		DedupWindow:   parseDuration(cfg.Notification.DedupWindow, 5*time.Minute),
 		ResolveAfter:  parseDuration(cfg.Notification.ResolveAfter, 10*time.Minute),
 		CheckInterval: parseDuration(cfg.Notification.CheckInterval, 1*time.Minute),
 	}
-	lm := notify.NewLifecycleManager(lifecycleCfg)
+	lm := incident.NewLifecycleManager(lifecycleCfg)
 	managed := lm.Run(ctx, diagnosed)
 	slog.Info("lifecycle manager enabled",
 		"dedup_window", lifecycleCfg.DedupWindow,

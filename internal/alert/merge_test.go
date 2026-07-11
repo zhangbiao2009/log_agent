@@ -1,9 +1,11 @@
-package notify
+package alert
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/zhangbiao2009/log_agent/internal/core"
 )
 
 // TestMergeAlerts_CombinesAllInputs verifies every alert from every input
@@ -11,12 +13,12 @@ import (
 func TestMergeAlerts_CombinesAllInputs(t *testing.T) {
 	ctx := context.Background()
 
-	in1 := make(chan Alert, 3)
-	in2 := make(chan Alert, 3)
+	in1 := make(chan core.Alert, 3)
+	in2 := make(chan core.Alert, 3)
 
-	in1 <- Alert{Service: "svc-a", Count: 1}
-	in1 <- Alert{Service: "svc-a", Count: 2}
-	in2 <- Alert{Service: "svc-b", Count: 3}
+	in1 <- core.Alert{Service: "svc-a", Count: 1}
+	in1 <- core.Alert{Service: "svc-a", Count: 2}
+	in2 <- core.Alert{Service: "svc-b", Count: 3}
 	close(in1)
 	close(in2)
 
@@ -44,8 +46,8 @@ func TestMergeAlerts_CombinesAllInputs(t *testing.T) {
 // only after every input channel is drained and closed.
 func TestMergeAlerts_ClosesWhenAllInputsClose(t *testing.T) {
 	ctx := context.Background()
-	in1 := make(chan Alert)
-	in2 := make(chan Alert)
+	in1 := make(chan core.Alert)
+	in2 := make(chan core.Alert)
 	out := MergeAlerts(ctx, in1, in2)
 
 	close(in1)
@@ -74,7 +76,7 @@ func TestMergeAlerts_ClosesWhenAllInputsClose(t *testing.T) {
 // merge goroutines and closes the output even while inputs stay open.
 func TestMergeAlerts_ContextCancelStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	in := make(chan Alert) // never closed
+	in := make(chan core.Alert) // never closed
 	out := MergeAlerts(ctx, in)
 
 	cancel()

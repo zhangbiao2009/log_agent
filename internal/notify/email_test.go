@@ -3,19 +3,20 @@ package notify
 import (
 	"context"
 	"fmt"
+	"github.com/zhangbiao2009/log_agent/internal/core"
 	"net/smtp"
 	"strings"
 	"testing"
 	"time"
 )
 
-func makeTestIncident(eventType string) Incident {
-	inc := Incident{
+func makeTestIncident(eventType string) core.Incident {
+	inc := core.Incident{
 		ID:          "test-123",
 		Services:    []string{"order-service", "payment-service", "bank-gateway"},
 		RootService: "bank-gateway",
 		DepChain:    []string{"bank-gateway", "payment-service", "order-service"},
-		Alerts: []Alert{
+		Alerts: []core.Alert{
 			{Service: "bank-gateway", Level: "ERROR", Count: 200, Window: time.Minute},
 		},
 		OpenedAt:    time.Now(),
@@ -23,15 +24,15 @@ func makeTestIncident(eventType string) Incident {
 		Diagnosis:   "bank-gateway stopped responding after deploy",
 		Severity:    "P1",
 		Suggestions: []string{"Rollback bank-gateway to v2.3.0", "Check DB connections"},
-		Status:      StatusOpen,
+		Status:      core.StatusOpen,
 		EventType:   eventType,
 	}
 	if eventType == "resolved" {
-		inc.Status = StatusResolved
+		inc.Status = core.StatusResolved
 		inc.Duration = 5 * time.Minute
 	}
 	if eventType == "updated" {
-		inc.Status = StatusOngoing
+		inc.Status = core.StatusOngoing
 	}
 	return inc
 }
@@ -136,13 +137,13 @@ func TestEmail_SingleAlert_Format(t *testing.T) {
 	})
 	e.sendMail = captureSendMail(&cap, nil)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:        "single-1",
 		Services:  []string{"myapp"},
-		Alerts:    []Alert{{Service: "myapp", Level: "ERROR", Count: 10, Window: time.Minute}},
+		Alerts:    []core.Alert{{Service: "myapp", Level: "ERROR", Count: 10, Window: time.Minute}},
 		Severity:  "P3",
 		EventType: "opened",
-		Status:    StatusOpen,
+		Status:    core.StatusOpen,
 	}
 	if err := e.Send(context.Background(), inc); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -241,12 +242,12 @@ func TestEmail_TemplateRenders_MinimalFields(t *testing.T) {
 	})
 	e.sendMail = captureSendMail(&cap, nil)
 
-	inc := Incident{
+	inc := core.Incident{
 		ID:        "min-1",
 		Services:  []string{"svc"},
-		Alerts:    []Alert{{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute}},
+		Alerts:    []core.Alert{{Service: "svc", Level: "ERROR", Count: 1, Window: time.Minute}},
 		EventType: "opened",
-		Status:    StatusOpen,
+		Status:    core.StatusOpen,
 	}
 	if err := e.Send(context.Background(), inc); err != nil {
 		t.Fatalf("template render with minimal fields failed: %v", err)
